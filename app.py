@@ -37,6 +37,8 @@ def get_image_url(email: str, s=250, d="https://www.example.com/default.jpg") ->
 # socket connections socket_id -> send
 connections: Dict[str, typing.Awaitable] = {}
 
+MESSAGE_HISTORY_PAGE_SIZE = 40
+
 @dataclass(kw_only=True)
 class TsRec: created_at: int = dataclasses.field(default_factory=lambda: int(time.time()))
 
@@ -58,11 +60,11 @@ class ChanneMessageWCtx:
     id: int; created_at: int; message: str; u_name: str; u_image_url: str; c_id: int; c_name: str
 
     @staticmethod
-    def latest(cid: int) -> List['ChanneMessageWCtx']:
-        return list(map(lambda args: ChanneMessageWCtx(*args), db.execute("""
+    def latest(cid: int, offset: int = 0) -> Tuple[List['ChanneMessageWCtx'], int]:
+        return list(map(lambda args: ChanneMessageWCtx(*args), db.execute(f"""
             SELECT id, created_at, message, u_name, u_image_url, c_id, c_name
-            FROM messages_w_ctx ORDER BY created_at DESC LIMIT 100
-        """)))[::-1]
+            FROM messages_w_ctx ORDER BY created_at DESC LIMIT {MESSAGE_HISTORY_PAGE_SIZE} OFFSET {offset}
+        """)))[::-1], offset + MESSAGE_HISTORY_PAGE_SIZE
     
     @staticmethod
     def by_id(message_id: int) -> 'ChanneMessageWCtx':
@@ -210,34 +212,61 @@ def home(): return Redirect(f"/c/{channels()[0].id}")
 @rt("/healthcheck")
 def get(): return JSONResponse({"status": "ok"})
 
+@rt('/c/messages/{cid}')
+def channel_message(req: Request, cid: int):
+    # get offset from query params
+    offset = int(req.query_params.get("offset", 0))
+    msgs, new_offset = ChanneMessageWCtx.latest(cid, offset)
+    logger.debug(f"MESSAGES: {len(msgs)}")
+    
+    s = f"""el.scrollTop = el.scrollHeight;""" if offset == 0 else ""
+    
+    return Div(x_init=f"""
+        function(offset){{
+            const el = document.getElementById("msg-list-{cid}");
+            console.log(">>>>>>>>> messages are in, yo.", offset, el);
+            el.setAttribute("hx-get", "/c/messages/{cid}?offset=" + offset);
+            htmx.process(el);
+        }}({new_offset})  
+    """), *msgs
+    # ⬆️ only include scroller if it looks like we have more messages to load 
+
+
 @rt('/c/{cid}')
 def channel(req: Request, cid: int):
-    m, w = req.scope['m'], req.scope['w']
+    m, w, frm_id, msgs_id = req.scope['m'], req.scope['w'], f"f-{cid}", f"msg-list-{cid}"
     convo = Div(cls='border-b flex px-6 py-2 items-center flex-none')(
         Div(cls='flex flex-col')(
             H3(cls='text-grey-darkest mb-1 font-extrabold')(f"Channel {cid}"),
             Div("Chit-chattin' about ugly HTML and mixing of concerns.", cls='text-grey-dark text-sm truncate')
         ),
-    ), Div(id=f"msg-list-{cid}", cls='scroller px-6 py-4 flex-1 overflow-y-scroll')(
-        Div(x_init=f"""
+    ), Div(id=msgs_id, hx_swap="afterbegin", hx_trigger="scroll[checkChatWindowScroll()] delay:500ms", cls='scroller px-6 py-4 flex-1 overflow-y-scroll')(
+        Div(hx_trigger="load", hx_get=f"/c/messages/{cid}", hx_swap="outerHTML", style="height: 4000px;", x_init=f"""
             function(){{
-                var msgList{cid} = document.getElementById("msg-list-{cid}"); msgList{cid}.scrollTop = msgList{cid}.scrollHeight;
-                setTimeout(function() {{
-                    var div = document.createElement('div');
-                    div.setAttribute("hx-get", "/c/{cid}/previous");
-                    div.setAttribute("hx-trigger", "intersect once");
-                    document.getElementById('msg-list-{cid}').insertBefore(div, document.getElementById('msg-list-{cid}').firstChild);
-                    htmx.process(div);
-                }}, 500)
-            }}()  
-        """),
-        *ChanneMessageWCtx.latest(cid),
+                const offset = 240;
+                const el = document.getElementById("msg-list-{cid}");
+                el.scrollTop = el.scrollHeight;
+                window.checkChatWindowScroll = function() {{
+                    console.log(">>>>>>>>>>> checking scroll position", el.scrollTop);
+                    return el.scrollTop <= offset;
+                }}
+            }}()
+           """
+        )
     ), Div(cls='pb-6 px-4 flex-none')(
         Div(cls='flex rounded-lg border-2 border-grey overflow-hidden')(
             Span(cls='text-3xl text-grey border-r-2 border-grey p-2')(
                 NotStr("""<svg class="fill-current h-6 w-6 block" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20"><path d="M16 10c0 .553-.048 1-.601 1H11v4.399c0 .552-.447.601-1 .601-.553 0-1-.049-1-.601V11H4.601C4.049 11 4 10.553 4 10c0-.553.049-1 .601-1H9V4.601C9 4.048 9.447 4 10 4c.553 0 1 .048 1 .601V9h4.399c.553 0 .601.447.601 1z"></path></svg>""")
             ),
-            Form(Input(id='msg'), Input(name='command', type="hidden", value="send_msg", cls='w-full px-4'), Input(name='cid', type="hidden", value="1"), id='form', ws_send=True)
+            Form(Input(id='msg'), Input(name='command', type="hidden", value="send_msg", cls='w-full px-4'), Input(name='cid', type="hidden", value="1"), id=frm_id, ws_send=True, **{
+                "hx-on::submit": "alert('Submitted');"
+            }),
+            HtmxOn('wsAfterSend', f"""if (JSON.parse(event.detail.message).command === "send_msg") {{       
+                   document.querySelector("#{frm_id}").reset();
+                   setTimeout(() => {{
+                          document.getElementById("{msgs_id}").scrollTop = document.getElementById("{msgs_id}").scrollHeight;
+                   }}, 500);
+            }}""")
         )
     )
     return convo if req.headers.get('Hx-Request') else Layout(convo, m, w)
@@ -281,7 +310,6 @@ async def ws(command:str, auth:dict, d: dict, ws):
                 logger.debug(f"sending message to {s.sid} {connections[s.sid]}")
                 await connections[s.sid](
                     Div(id=f"msg-list-{cmd.cid}", hx_swap_oob="beforeend")(
-                        Div(x_init="console.log('>>>>>>>>>initialized!')"),
                         ChanneMessageWCtx.by_id(new_msg.id)
                     )
                 )
