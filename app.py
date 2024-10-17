@@ -19,7 +19,7 @@ def check_auth(req, sess):
     # to ensure that the user can only see/edit their own todos.
     # todos.xtra(name=auth)
 
-bware = Beforeware(check_auth, skip=[r'/favicon\.ico', r'/static/.*', r'.*\.css', '/login', '/healthcheck',])
+bware = Beforeware(check_auth, skip=[r'/favicon\.ico', r'/static/.*', r'.*\.css', '/login', '/healthcheck', '/ws'])
 
 app = FastHTMLWithLiveReload(ws_hdr=True, debug=True, hdrs=[
     ShadHead(tw_cdn=True),
