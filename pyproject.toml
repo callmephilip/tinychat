@@ -1,0 +1,17 @@
+[tool.poetry]
+name = "tinychat"
+version = "0.1.0"
+description = "Tiny chat"
+authors = ["Philip Nuzhnyi <philip.nuzhnyy@gmail.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.10"
+python-fasthtml = "^0.6.12"
+pytest = "^8.3.3"
+fasthtml-tractor = {git = "https://github.com/callmephilip/fasthtml-tractor.git"}
+shad4fast = "^1.2.8"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
