@@ -74,7 +74,7 @@ jobs:
           # change this if you change volumes mapping for swag in docker-compose.yml
           target: /etc/config/swag
       - name: Deploy to Digital Ocean droplet via SSH action
-        uses: appleboy/ssh-action@v1.0.3
+        uses: appleboy/ssh-action@v1.1.0
         with:
           host: ${{ secrets.HOST_IP }}
           username: root
