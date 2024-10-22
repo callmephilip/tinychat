@@ -6,11 +6,9 @@ from tractor import connect_tractor
 # re https://www.creative-tim.com/twcomponents/component/slack-clone-1
 # re https://systemdesign.one/slack-architecture/
 
-# notification handler on the client side:
-# handle htmx:wsAfterMessage
-# inspect payload, if event is "new-message", get message data + messageUI
-# if active channel, append messageUI to the chat window
-# if not active, show a notification indicator in the sidebar
+# TODO: support 1 on 1 channels
+# TODO: figure out distinction between 1 on 1 and "private" channels
+
 
 login_redir = RedirectResponse('/login', status_code=303)
 def check_auth(req, sess):
@@ -151,11 +149,11 @@ class Command:
 
     @staticmethod
     def from_json(cmd: str, data: str) -> 'Command':
-        if cmd == "send_msg": return SendMsgCommand(cmd=cmd, **json.loads(data))
+        if cmd == "ping": return PingCommand(cmd=cmd, **json.loads(data))
         raise ValueError(f"Invalid command: {cmd}")
 
 @dataclass
-class SendMsgCommand(Command): cid: int; msg: str
+class PingCommand(Command): cid: int
 
 def setup_database(test=False):
     global db
@@ -199,6 +197,13 @@ def setup_database(test=False):
     if not test: connect_tractor(app, db.conn)
 
 setup_database()
+
+async def ws_send_to_member(member_id: int, data):
+    s = sockets(where=f"mid={member_id}")[0]
+    logger.debug(f"sockets {s}")
+    # send message to each socket
+    logger.debug(f"sending message to {s.sid} {connections[s.sid]}")
+    await connections[s.sid](data)
 
 ## UI
 
@@ -245,14 +250,11 @@ def Layout(content: FT, m: Member, w: Workspace) -> FT:
         Div(id="main", cls="flex-1 flex flex-col bg-white overflow-hidden")(content),
         HtmxOn('wsConfigSend', """
             console.log(">>>>>>>>>>>>>>>>>>>>>>", event);
-            if (event.detail.parameters.command !== "send_msg") { throw new Error(`Invalid command: ${event.detail.parameters.command}`) }
+            if (event.detail.parameters.command !== "ping") { throw new Error(`Invalid command: ${event.detail.parameters.command}`) }
             
             event.detail.parameters = {
                command: event.detail.parameters.command,
-               d: {
-                   cid: event.detail.parameters.cid,
-                   msg: event.detail.parameters.msg
-               },
+               d: { cid: event.detail.parameters.cid },
                auth: { mid: document.querySelector("body").getAttribute("data-mid") }
             };
         """
@@ -304,10 +306,10 @@ async def dispatch_incoming_message(m: ChannelMessage):
         s = sockets(where=f"mid={member.member}")
         logger.debug(f"sockets {s}")
         # send message to each socket
-        for s in s:
-            logger.debug(f"sending message to {s.sid} {connections[s.sid]}")
-            await connections[s.sid](Div(id=f"msg-list-{m.channel}", hx_swap_oob="beforeend")(m_with_ctx))
-            await connections[s.sid](ChannelForMember.from_channel_member(member))
+        for c_s in s:
+            logger.debug(f"sending message to {c_s.sid} {connections[c_s.sid]}")
+            await connections[c_s.sid](Div(id=f"msg-list-{m.channel}", hx_swap_oob="beforeend")(m_with_ctx))
+            await connections[c_s.sid](ChannelForMember.from_channel_member(member))
 
 @rt('/messages/send', methods=['POST'])
 def send_msg(msg:str, cid:int, req: Request):
@@ -341,7 +343,7 @@ def channel(req: Request, cid: int):
     m, w, frm_id, msgs_id = req.scope['m'], req.scope['w'], f"f-{cid}", f"msg-list-{cid}"
     channel = channels[cid]
     channel_for_member = ChannelForMember.from_channel_member(channel_members(where=f"channel={cid} and member={m.id}")[0]).mark_all_as_read()
-    convo = Div(cls='border-b flex px-6 py-2 items-center flex-none')(
+    convo = Div(cls='border-b flex px-6 py-2 items-center flex-none', hx_trigger="every 5s", hx_vals=f'{{"command": "ping", "cid": {cid} }}', **{"ws_send": "true"})(
         Div(cls='flex flex-col')(
             H3(cls='text-grey-darkest mb-1 font-extrabold')(f"#{channel.name}"),
             Div("Chit-chattin' about ugly HTML and mixing of concerns.", cls='text-grey-dark text-sm truncate')
@@ -390,16 +392,26 @@ def on_disconn(ws):
     sockets.delete(sid)
     connections.pop(sid, None)
 
+async def process_ping(cmd: PingCommand, member: Member):
+    print(f">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> got ping {cmd}")
+    # mark all messages as read in cid channel
+    channel_for_member = ChannelForMember.from_channel_member(channel_members(where=f"channel={cmd.cid} and member={member.id}")[0]).mark_all_as_read()
+    await ws_send_to_member(member.id, channel_for_member)
+
 @app.ws('/ws', conn=on_conn, disconn=on_disconn)
 async def ws(command:str, auth:dict, d: dict, ws):
+    print(f">>>>>>>>>>>>>> got message in socket {command}")
+    print(f">>>>>>>>>>>>>> got message in socket {auth}")
+    print(f">>>>>>>>>>>>>> got message in socket {d}")
+
     mid = int(auth['mid'])
     logger.debug(f"socket ID is {str(id(ws))}")
     socket = sockets[str(id(ws))]
     logger.debug(f"got socket {socket}")
     logger.debug(f"got command {command} with payload {json.dumps(d)}")
-    # await {
-    #     "send_msg": on_send_msg
-    # }[cmd.cmd](cmd)
+    
+    cmd = Command.from_json(command, json.dumps(d))
+    await { "ping": process_ping }[cmd.cmd](cmd, members[mid])
 
 serve()
 
@@ -416,10 +428,9 @@ def client():
     yield Client(app)
 
 def test_commands():
-    cmd = Command.from_json("send_msg", '{"cid": 1, "msg": "hello"}')
-    assert isinstance(cmd, SendMsgCommand)
+    cmd = Command.from_json("ping", '{"cid": 1}')
+    assert isinstance(cmd, PingCommand)
     assert cmd.cid == 1
-    assert cmd.msg == "hello"
 
 def test_healthcheck(client):
     response = client.get('/healthcheck')
