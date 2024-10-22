@@ -4,6 +4,13 @@ from shad4fast import *
 from tractor import connect_tractor
 
 # re https://www.creative-tim.com/twcomponents/component/slack-clone-1
+# re https://systemdesign.one/slack-architecture/
+
+# notification handler on the client side:
+# handle htmx:wsAfterMessage
+# inspect payload, if event is "new-message", get message data + messageUI
+# if active channel, append messageUI to the chat window
+# if not active, show a notification indicator in the sidebar
 
 login_redir = RedirectResponse('/login', status_code=303)
 def check_auth(req, sess):
@@ -21,10 +28,10 @@ def check_auth(req, sess):
 
 bware = Beforeware(check_auth, skip=[r'/favicon\.ico', r'/static/.*', r'.*\.css', '/login', '/healthcheck'])
 
-app = FastHTMLWithLiveReload(ws_hdr=True, debug=True, hdrs=[
+app = FastHTMLWithLiveReload(debug=True, hdrs=[
     ShadHead(tw_cdn=True),
     Script(src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js", defer=True),
-], before=bware)
+], exts="ws", before=bware)
 rt = app.route
 
 logging.basicConfig(format="%(asctime)s - %(message)s",datefmt="🧵 %d-%b-%y %H:%M:%S",level=logging.DEBUG,handlers=[logging.StreamHandler()])
@@ -42,39 +49,99 @@ MESSAGE_HISTORY_PAGE_SIZE = 40
 @dataclass(kw_only=True)
 class TsRec: created_at: int = dataclasses.field(default_factory=lambda: int(time.time()))
 
+# TODO: figure ouf if timestamps resolution is good enough
+
 @dataclass(kw_only=True)
 class User(TsRec): id: int; name: str; email: str; image_url: str; is_account_enabled: bool = True
 @dataclass(kw_only=True)
 class Workspace(TsRec): id: int; name: str
 @dataclass(kw_only=True)
-class Channel(TsRec): id: int; name: str; workspace_id: int
+class Channel(TsRec):
+    id: int; name: str; workspace_id: int; is_private: bool = False
+
+    @property
+    def last_message_ts(self) -> Optional[int]:
+        try:
+            return next(db.execute(f"""SELECT created_at FROM channel_message WHERE channel={self.id} ORDER BY created_at DESC LIMIT 1"""))[0]
+        except StopIteration: return None
+
+@dataclass(kw_only=True)
+class ChannelForMember:
+    channel_name: str; channel_id: int; member_id: int; has_unread_messages: bool
+
+    @staticmethod
+    def from_channel_member(m: 'ChannelMember') -> 'ChannelForMember':
+        c = channels[m.channel]
+        last_message_ts = c.last_message_ts
+
+        if last_message_ts is None: has_unread_messages = False
+        else:
+            seen = channel_message_seen_indicators(where=f"channel_id={c.id} AND member_id={m.member}")
+            print(f">>>>>>>>>> seen: {seen}")
+            seen = seen[0] if len(seen) > 0 else None
+            if not seen: has_unread_messages = True
+            else: has_unread_messages = c.last_message_ts > seen.last_seen_ts
+
+        return ChannelForMember(channel_id=c.id, channel_name=c.name, member_id=m.member, has_unread_messages=has_unread_messages)
+    
+    def mark_all_as_read(self) -> 'ChannelForMember':
+        channel = channels[self.channel_id]
+        seen = channel_message_seen_indicators(where=f"channel_id={channel.id} AND member_id={self.member_id}")
+        seen = seen[0] if len(seen) > 0 else None
+        if seen:
+            seen.last_seen_ts = channel.last_message_ts
+            channel_message_seen_indicators.update(seen)
+        else:
+            channel_message_seen_indicators.insert(ChannelMessageSeenIndicator(channel_id=channel.id, member_id=self.member_id, last_seen_ts=channel.last_message_ts))
+        
+        return ChannelForMember.from_channel_member(channel_members(where=f"channel={self.channel_id} and member={self.member_id}")[0])
+
+@dataclass(kw_only=True)
+class ChannelMessageSeenIndicator:
+    channel_id: int; member_id: int; last_seen_ts: int
+
+    @staticmethod
+    def update_seen_indicator(channel_id: int, member_id: int, last_seen_ts: int):
+        seen = channel_message_seen_indicators(where=f"channel_id={channel_id} AND member_id={member_id}")
+        if len(seen) == 0:
+            channel_message_seen_indicators.insert(ChannelMessageSeenIndicator(channel_id=channel_id, member_id=member_id, last_seen_ts=last_seen_ts))
+        else:
+            channel_message_seen_indicators.update(seen[0].id, last_seen_ts=last_seen_ts)
+
 @dataclass(kw_only=True)
 class Member(TsRec): id: int; user_id: int; workspace_id: int
 @dataclass(kw_only=True)
-class ChannelMember(TsRec): id: int; channel: int; member: int
+class ChannelMember(TsRec): channel: int; member: int
 @dataclass(kw_only=True)
-class ChannelMessage(TsRec): id: int; channel: int; sender: int; message: str
+class ChannelMessage(TsRec):
+    id: int; channel: int; sender: int; message: str
+    
+    @staticmethod
+    def with_ctx(m: 'ChannelMessage') -> 'ChannelMessageWCtx':
+        return ChannelMessageWCtx(*next(db.execute(f"""
+            SELECT id, created_at, message, u_name, u_image_url, c_id, c_name
+            FROM messages_w_ctx WHERE id={m.id}
+        """)))
+
 
 @dataclass
-class ChanneMessageWCtx:
+class ChannelMessageWCtx:
     id: int; created_at: int; message: str; u_name: str; u_image_url: str; c_id: int; c_name: str
 
     @staticmethod
-    def latest(cid: int, offset: int = 0) -> Tuple[List['ChanneMessageWCtx'], int]:
-        return list(map(lambda args: ChanneMessageWCtx(*args), db.execute(f"""
+    def latest(cid: int, offset: int = 0) -> Tuple[List['ChannelMessageWCtx'], int]:
+        return list(map(lambda args: ChannelMessageWCtx(*args), db.execute(f"""
             SELECT id, created_at, message, u_name, u_image_url, c_id, c_name
-            FROM messages_w_ctx ORDER BY created_at DESC LIMIT {MESSAGE_HISTORY_PAGE_SIZE} OFFSET {offset}
+            FROM messages_w_ctx WHERE c_id={cid} ORDER BY created_at DESC LIMIT {MESSAGE_HISTORY_PAGE_SIZE} OFFSET {offset}
         """)))[::-1], offset + MESSAGE_HISTORY_PAGE_SIZE
     
     @staticmethod
-    def by_id(message_id: int) -> 'ChanneMessageWCtx':
-        return ChanneMessageWCtx(*next(db.execute(f"""
+    def by_id(message_id: int) -> 'ChannelMessageWCtx':
+        return ChannelMessageWCtx(*next(db.execute(f"""
             SELECT id, created_at, message, u_name, u_image_url, c_id, c_name
             FROM messages_w_ctx WHERE id={message_id}
         """)))
 
-@dataclass(kw_only=True)
-class PrivateMessage(TsRec): id: int; sender: int; receiver: int; message: str
 @dataclass(kw_only=True)
 class Socket(TsRec): sid: str; mid: int
 
@@ -92,7 +159,7 @@ class SendMsgCommand(Command): cid: int; msg: str
 
 def setup_database(test=False):
     global db
-    global users, workspaces, channels, members, channel_members, channel_messages, private_messages, sockets
+    global users, workspaces, channels, members, channel_members, channel_messages, channel_message_seen_indicators, sockets
 
     db = database('./data/data.db') if not test else database(':memory:')
 
@@ -102,9 +169,9 @@ def setup_database(test=False):
     channels = db.create(Channel, pk="id", foreign_keys=[("workspace_id", "workspace", "id")])
     # TODO: figure out why foreign key are not enforced 
     members = db.create(Member, pk="id", foreign_keys=[("user_id", "user", "id"), ("workspace_id", "workspace", "id")])
-    channel_members = db.create(ChannelMember, pk="id", foreign_keys=[("channel", "channel", "id"), ("member", "member", "id")])
-    channel_messages = db.create(ChannelMessage, pk="id", foreign_keys=[("channel", "channel", "id"), ("sender", "user", "id")])  
-    private_messages = db.create(PrivateMessage, pk="id", foreign_keys=[("sender", "member", "id"), ("receiver", "member", "id")])
+    channel_members = db.create(ChannelMember, pk=("channel", "member"), foreign_keys=[("channel", "channel", "id"), ("member", "member", "id")])
+    channel_messages = db.create(ChannelMessage, pk="id", foreign_keys=[("channel", "channel", "id"), ("sender", "user", "id")])
+    channel_message_seen_indicators = db.create(ChannelMessageSeenIndicator, pk=("channel_id", "member_id"), foreign_keys=[("channel_id", "channel", "id"), ("member_id", "member", "id")])
     sockets =  db.create(Socket, pk="sid", foreign_keys=[("mid", "member", "id")])
 
     if not db["messages_w_ctx"].exists():
@@ -118,7 +185,16 @@ def setup_database(test=False):
         """)
 
     if workspaces.count == 0: workspaces.insert(Workspace(name="The Bakery"))
-    if channels.count == 0: channels.insert(Channel(name="general", workspace_id=1))
+    if channels.count == 0:
+        channels.insert(Channel(name="general", workspace_id=1))
+        channels.insert(Channel(name="random", workspace_id=1))
+
+    # setup triggers 
+    db.conn.execute(f"""CREATE TRIGGER IF NOT EXISTS update_last_seen_message_ts AFTER INSERT ON channel_message
+        BEGIN
+            INSERT INTO channel_message_seen_indicator(channel_id, member_id, last_seen_ts) VALUES(new.channel, new.sender, new.created_at)
+                ON CONFLICT(channel_id, member_id) DO UPDATE SET last_seen_ts=new.created_at;
+        END""")
 
     if not test: connect_tractor(app, db.conn)
 
@@ -133,18 +209,21 @@ def __ft__(self: Workspace): return Div('👨‍🏭', Strong(self.name))
 def __ft__(self: User): return Div('👤', Strong(self.name))
 
 @patch
-def __ft__(self: Channel): return A(hx_target="#main", hx_get=f"/c/{self.id}")(Div('📢', Strong(self.name)))
+def __ft__(self: ChannelForMember):
+    return A(id=f"channel-{self.channel_id}-{self.member_id}", hx_target="#main", hx_get=f"/c/{self.channel_id}", hx_push_url="true", hx_swap_oob="true")(
+        Div(f'📢 {self.channel_name}') if not self.has_unread_messages else Strong(f'📢 {self.channel_name}')
+    )
 
 @patch
 def __ft__(self: ChannelMessage): return Div('👤', Strong(self.name))
 
 @patch
-def __ft__(self: ChanneMessageWCtx):
+def __ft__(self: ChannelMessageWCtx):
     return Div(cls='flex items-start mb-4 text-sm')(
         Img(src=self.u_image_url, cls='w-10 h-10 rounded mr-3'),
         Div(cls='flex-1 overflow-hidden')(
             Div(
-                Span(self.u_name, cls='font-bold'),
+                Span(f"{self.u_name}", cls='font-bold'),
                 Span(self.created_at, cls='text-grey text-xs')
             ),
             P(self.message, cls='text-black leading-normal')
@@ -161,7 +240,7 @@ def Layout(content: FT, m: Member, w: Workspace) -> FT:
             Separator(),
             *users(where=f"id in (select user_id from member where workspace_id={w.id})"),
             Separator(),
-            *channels(where=f"workspace_id={w.id}")
+            *map(lambda ch: ChannelForMember.from_channel_member(ch), channel_members(where=f"member={m.id}"))
         ),
         Div(id="main", cls="flex-1 flex flex-col bg-white overflow-hidden")(content),
         HtmxOn('wsConfigSend', """
@@ -201,7 +280,9 @@ def post(login:Login, sess):
     user, workspace = users.insert(User(name=login.name, email=login.email, image_url=get_image_url(login.email))), workspaces()[0]
     # automatically associate the user with the first workspace + channel
     member = members.insert(Member(user_id=user.id, workspace_id=workspace.id))
-    channel_members.insert(ChannelMember(channel=channels()[0].id, member=member.id))
+    for channel in channels():
+        cm = channel_members.insert(ChannelMember(channel=channel.id, member=member.id))
+        # mark all messages as read
     sess['mid'], sess['wid'] = member.id, workspace.id
     return RedirectResponse('/', status_code=303)
 
@@ -212,11 +293,34 @@ def home(): return Redirect(f"/c/{channels()[0].id}")
 @rt("/healthcheck")
 def get(): return JSONResponse({"status": "ok"})
 
+async def dispatch_incoming_message(m: ChannelMessage):
+    print(f"dispatching message: {m}")
+    print(f'initial channel members: {channel_members(where=f"channel={m.channel}")}')
+    members_to_notify = list(filter(lambda cm: cm.member != m.sender, channel_members(where=f"channel={m.channel}")))
+    print(f">>>>>> members are: {members_to_notify}")
+    print(f">>>>>>> message is: {m}")
+    m_with_ctx = ChannelMessage.with_ctx(m)
+    for member in members_to_notify:
+        s = sockets(where=f"mid={member.member}")
+        logger.debug(f"sockets {s}")
+        # send message to each socket
+        for s in s:
+            logger.debug(f"sending message to {s.sid} {connections[s.sid]}")
+            await connections[s.sid](Div(id=f"msg-list-{m.channel}", hx_swap_oob="beforeend")(m_with_ctx))
+            await connections[s.sid](ChannelForMember.from_channel_member(member))
+
+@rt('/messages/send', methods=['POST'])
+def send_msg(msg:str, cid:int, req: Request):
+    m = req.scope['m']
+    cm = channel_messages.insert(ChannelMessage(channel=cid, sender=m.id, message=msg))
+    new_message = ChannelMessage.with_ctx(cm)
+    return new_message, BackgroundTask(dispatch_incoming_message, m=cm)
+
 @rt('/c/messages/{cid}')
 def channel_message(req: Request, cid: int):
     # get offset from query params
     offset = int(req.query_params.get("offset", 0))
-    msgs, new_offset = ChanneMessageWCtx.latest(cid, offset)
+    msgs, new_offset = ChannelMessageWCtx.latest(cid, offset)
     logger.debug(f"MESSAGES: {len(msgs)}")
     
     s = f"""el.scrollTop = el.scrollHeight;""" if offset == 0 else ""
@@ -235,9 +339,11 @@ def channel_message(req: Request, cid: int):
 @rt('/c/{cid}')
 def channel(req: Request, cid: int):
     m, w, frm_id, msgs_id = req.scope['m'], req.scope['w'], f"f-{cid}", f"msg-list-{cid}"
+    channel = channels[cid]
+    channel_for_member = ChannelForMember.from_channel_member(channel_members(where=f"channel={cid} and member={m.id}")[0]).mark_all_as_read()
     convo = Div(cls='border-b flex px-6 py-2 items-center flex-none')(
         Div(cls='flex flex-col')(
-            H3(cls='text-grey-darkest mb-1 font-extrabold')(f"Channel {cid}"),
+            H3(cls='text-grey-darkest mb-1 font-extrabold')(f"#{channel.name}"),
             Div("Chit-chattin' about ugly HTML and mixing of concerns.", cls='text-grey-dark text-sm truncate')
         ),
     ), Div(id=msgs_id, hx_swap="afterbegin", hx_trigger="scroll[checkChatWindowScroll()] delay:500ms", cls='scroller px-6 py-4 flex-1 overflow-y-scroll')(
@@ -258,18 +364,17 @@ def channel(req: Request, cid: int):
             Span(cls='text-3xl text-grey border-r-2 border-grey p-2')(
                 NotStr("""<svg class="fill-current h-6 w-6 block" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20"><path d="M16 10c0 .553-.048 1-.601 1H11v4.399c0 .552-.447.601-1 .601-.553 0-1-.049-1-.601V11H4.601C4.049 11 4 10.553 4 10c0-.553.049-1 .601-1H9V4.601C9 4.048 9.447 4 10 4c.553 0 1 .048 1 .601V9h4.399c.553 0 .601.447.601 1z"></path></svg>""")
             ),
-            Form(Input(id='msg'), Input(name='command', type="hidden", value="send_msg", cls='w-full px-4'), Input(name='cid', type="hidden", value="1"), id=frm_id, ws_send=True, **{
-                "hx-on::submit": "alert('Submitted');"
-            }),
-            HtmxOn('wsAfterSend', f"""if (JSON.parse(event.detail.message).command === "send_msg") {{       
-                   document.querySelector("#{frm_id}").reset();
-                   setTimeout(() => {{
-                          document.getElementById("{msgs_id}").scrollTop = document.getElementById("{msgs_id}").scrollHeight;
-                   }}, 500);
-            }}""")
+            Form(id=frm_id, hx_post="/messages/send", hx_target=f"#{msgs_id}", hx_swap="beforeend",
+                 **{ "hx-on::after-request": f"""document.querySelector("#{frm_id}").reset();"""}
+            )(
+                Input(id='msg'),
+                Input(name='cid', type="hidden", value=cid)
+            ),
+            # TODO: figure out scrolling situation
+            # previous implementation: document.getElementById("{msgs_id}").scrollTop = document.getElementById("{msgs_id}").scrollHeight;
         )
     )
-    return convo if req.headers.get('Hx-Request') else Layout(convo, m, w)
+    return [convo, channel_for_member] if req.headers.get('Hx-Request') else Layout(convo, m, w)
 
 def on_conn(ws, send):
     # TODO: figure out socket authentication
@@ -292,31 +397,9 @@ async def ws(command:str, auth:dict, d: dict, ws):
     socket = sockets[str(id(ws))]
     logger.debug(f"got socket {socket}")
     logger.debug(f"got command {command} with payload {json.dumps(d)}")
-
-    cmd = Command.from_json(command, json.dumps(d))
-
-    async def on_send_msg(cmd: SendMsgCommand):
-        # get all members of the channel
-        c_ms = channel_members(where=f"channel={cmd.cid}")
-        logger.debug(f"channel members {c_ms}")
-        new_msg = channel_messages.insert(ChannelMessage(channel=cmd.cid, sender=mid, message=cmd.msg))
-        logger.debug(f"MESSAGES_W_CTX: {ChanneMessageWCtx.latest(cmd.cid)}")
-
-        for m in c_ms:
-            s = sockets(where=f"mid={m.member}")
-            logger.debug(f"sockets {s}")
-            # send message to each socket
-            for s in s:
-                logger.debug(f"sending message to {s.sid} {connections[s.sid]}")
-                await connections[s.sid](
-                    Div(id=f"msg-list-{cmd.cid}", hx_swap_oob="beforeend")(
-                        ChanneMessageWCtx.by_id(new_msg.id)
-                    )
-                )
-
-    await {
-        "send_msg": on_send_msg
-    }[cmd.cmd](cmd)
+    # await {
+    #     "send_msg": on_send_msg
+    # }[cmd.cmd](cmd)
 
 serve()
 
@@ -346,7 +429,7 @@ def test_healthcheck(client):
 def test_auth(client):
     assert len(users()) == 0
     assert len(workspaces()) == 1
-    assert len(channels()) == 1
+    assert len(channels()) == 2
     assert len(members()) == 0
     assert len(channel_members()) == 0
 
@@ -359,7 +442,40 @@ def test_auth(client):
     
     assert len(users()) == 1
     assert len(members()) == 1
-    assert len(channel_members()) == 1
+    assert len(channel_members()) == 2
 
     assert response.status_code == 303
     assert response.headers['location'] == '/'
+
+def test_channel_data_helpers():
+    u1, u2, workspace, channel = users.insert(User(name="Philip", email="p@g.com")), users.insert(User(name="John", email="j@g.com")), workspaces()[0], channels()[0]
+    m1, m2 = members.insert(Member(user_id=u1.id, workspace_id=workspace.id)), members.insert(Member(user_id=u2.id, workspace_id=workspace.id))
+    cm1, cm2 = channel_members.insert(ChannelMember(channel=channel.id, member=m1.id)), channel_members.insert(ChannelMember(channel=channel.id, member=m2.id))
+
+    # no messages in the channel
+    assert channel.last_message_ts is None 
+
+    # user 1 sends message to the channel
+    msg = channel_messages.insert(ChannelMessage(channel=channel.id, sender=m1.id, message="hello"))
+    assert channel.last_message_ts == msg.created_at
+
+    c4m1, c4m2 = ChannelForMember.from_channel_member(cm1), ChannelForMember.from_channel_member(cm2)
+
+    assert c4m1.has_unread_messages is False
+    assert c4m2.has_unread_messages is True
+
+    # sleep a bit (so timestamps work correctly)
+    time.sleep(1)
+
+    # user 2 sends a message to the channel, seen indicator should be updated
+    channel_messages.insert(ChannelMessage(channel=channel.id, sender=m2.id, message="hey"))
+
+    c4m1, c4m2 = ChannelForMember.from_channel_member(cm1), ChannelForMember.from_channel_member(cm2)
+
+    assert c4m1.has_unread_messages is True
+    assert c4m2.has_unread_messages is False
+
+    # can mark all as read
+    c4m1 = c4m1.mark_all_as_read()
+
+    assert c4m1.has_unread_messages is False
