@@ -6,9 +6,12 @@ from tractor import connect_tractor
 # re https://www.creative-tim.com/twcomponents/component/slack-clone-1
 # re https://systemdesign.one/slack-architecture/
 
+# TODO: figure ouf if timestamps resolution is good enough
 # TODO: support 1 on 1 channels
 # TODO: figure out distinction between 1 on 1 and "private" channels
-
+# TODO: switch to cursor based pagination for messages
+# TODO: make message list scrolling work
+# TODO: figure out socket authentication
 
 login_redir = RedirectResponse('/login', status_code=303)
 def check_auth(req, sess):
@@ -45,9 +48,7 @@ connections: Dict[str, typing.Awaitable] = {}
 MESSAGE_HISTORY_PAGE_SIZE = 40
 
 @dataclass(kw_only=True)
-class TsRec: created_at: int = dataclasses.field(default_factory=lambda: int(time.time()))
-
-# TODO: figure ouf if timestamps resolution is good enough
+class TsRec: created_at: int = dataclasses.field(default_factory=lambda: int(time.time() * 1000))
 
 @dataclass(kw_only=True)
 class User(TsRec): id: int; name: str; email: str; image_url: str; is_account_enabled: bool = True
@@ -55,7 +56,7 @@ class User(TsRec): id: int; name: str; email: str; image_url: str; is_account_en
 class Workspace(TsRec): id: int; name: str
 @dataclass(kw_only=True)
 class Channel(TsRec):
-    id: int; name: str; workspace_id: int; is_private: bool = False
+    id: int; name: str; workspace_id: int; is_direct: bool = False; is_private: bool = False
 
     @property
     def last_message_ts(self) -> Optional[int]:
@@ -107,7 +108,13 @@ class ChannelMessageSeenIndicator:
             channel_message_seen_indicators.update(seen[0].id, last_seen_ts=last_seen_ts)
 
 @dataclass(kw_only=True)
-class Member(TsRec): id: int; user_id: int; workspace_id: int
+class Member(TsRec):
+    id: int; user_id: int; workspace_id: int
+    @property
+    def name(self) -> str: return users[self.user_id].name
+    @property
+    def image_url(self) -> str: return users[self.user_id].image_url
+
 @dataclass(kw_only=True)
 class ChannelMember(TsRec): channel: int; member: int
 @dataclass(kw_only=True)
@@ -154,6 +161,14 @@ class Command:
 
 @dataclass
 class PingCommand(Command): cid: int
+
+@dataclass
+class ChannelPlaceholder: members: List[Member]
+
+def get_direct_message_channels(member: Member) -> List[Union[ChannelForMember | ChannelPlaceholder]]:
+    # get other members in the workspace
+    other_members = members(where=f"workspace_id=(select workspace_id from member where id={member.id}) and id != {member.id}")
+    return [ChannelPlaceholder(members=[member, m]) for m in other_members]
 
 def setup_database(test=False):
     global db
@@ -211,7 +226,7 @@ async def ws_send_to_member(member_id: int, data):
 def __ft__(self: Workspace): return Div('👨‍🏭', Strong(self.name))
 
 @patch
-def __ft__(self: User): return Div('👤', Strong(self.name))
+def __ft__(self: User): return Div('👤', self.name)
 
 @patch
 def __ft__(self: ChannelForMember):
@@ -235,6 +250,10 @@ def __ft__(self: ChannelMessageWCtx):
         )
     )
 
+@patch
+def __ft__(self: ChannelPlaceholder):
+    pass    
+
 ## end of UI
 
 def Layout(content: FT, m: Member, w: Workspace) -> FT:
@@ -243,9 +262,9 @@ def Layout(content: FT, m: Member, w: Workspace) -> FT:
         Div(cls="bg-background flex-none w-64 pb-6 hidden md:block")(
             w,
             Separator(),
-            *users(where=f"id in (select user_id from member where workspace_id={w.id})"),
+            *map(lambda ch: ChannelForMember.from_channel_member(ch), channel_members(where=f"member={m.id}")),
             Separator(),
-            *map(lambda ch: ChannelForMember.from_channel_member(ch), channel_members(where=f"member={m.id}"))
+            *users(where=f"id in (select user_id from member where workspace_id={w.id}) and id != {m.user_id}")
         ),
         Div(id="main", cls="flex-1 flex flex-col bg-white overflow-hidden")(content),
         HtmxOn('wsConfigSend', """
@@ -379,7 +398,6 @@ def channel(req: Request, cid: int):
     return [convo, channel_for_member] if req.headers.get('Hx-Request') else Layout(convo, m, w)
 
 def on_conn(ws, send):
-    # TODO: figure out socket authentication
     try:
         m, sid = members[int(ws.query_params.get("mid"))], str(id(ws))
         connections[sid] = send
@@ -476,7 +494,7 @@ def test_channel_data_helpers():
     assert c4m2.has_unread_messages is True
 
     # sleep a bit (so timestamps work correctly)
-    time.sleep(1)
+    time.sleep(0.1)
 
     # user 2 sends a message to the channel, seen indicator should be updated
     channel_messages.insert(ChannelMessage(channel=channel.id, sender=m2.id, message="hey"))
