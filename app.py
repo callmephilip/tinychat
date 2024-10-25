@@ -786,10 +786,5 @@ def test_list_of_channels_for_member(client):
     assert c4m.direct_channel_placeholders[0].member.name == "Philip"
 
 def test_login_flow(page: Page):
-    page.goto("https://playwright.dev/")
-
-    # Click the get started link.
-    page.get_by_role("link", name="Get started").click()
-
-    # Expects page to have a heading with the name of Installation.
-    expect(page.get_by_role("heading", name="Installation")).to_be_visible()
+    page.goto("http://localhost:5001")
+    assert page.url == "http://localhost:5001/login"
