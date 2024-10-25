@@ -7,10 +7,13 @@ readme = "README.md"
 
 [tool.poetry.dependencies]
 python = "^3.10"
-pytest = "^8.3.3"
 shad4fast = "^1.2.8"
 python-fasthtml = "^0.8.0"
 fasthtml-tractor = {git = "https://github.com/callmephilip/fasthtml-tractor.git"}
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.3.3"
+pytest-playwright = "^0.5.2"
 
 [build-system]
 requires = ["poetry-core"]

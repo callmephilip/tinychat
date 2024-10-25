@@ -1,7 +1,13 @@
-import logging, json, time, dataclasses, typing, hashlib, urllib, pytest
+import logging, json, time, dataclasses, typing, hashlib, urllib
 from fasthtml.common import *
 from shad4fast import *
 from tractor import connect_tractor
+
+try:
+    import pytest
+    from playwright.sync_api import Page, expect
+except ImportError: pass
+
 
 # +-------------------------------+-------------------------------+
 # | Channels                       | # general                     |
@@ -30,7 +36,7 @@ from tractor import connect_tractor
 # re https://www.creative-tim.com/twcomponents/component/slack-clone-1
 # re https://systemdesign.one/slack-architecture/
 
-
+# TODO: send ping right away when changing channel
 # TODO: switch to cursor based pagination for messages
 # TODO: make message list scrolling work
 # TODO: figure out socket authentication
@@ -778,3 +784,12 @@ def test_list_of_channels_for_member(client):
 
     assert c4m.direct_channels[0].channel_name == "Bob"
     assert c4m.direct_channel_placeholders[0].member.name == "Philip"
+
+def test_login_flow(page: Page):
+    page.goto("https://playwright.dev/")
+
+    # Click the get started link.
+    page.get_by_role("link", name="Get started").click()
+
+    # Expects page to have a heading with the name of Installation.
+    expect(page.get_by_role("heading", name="Installation")).to_be_visible()

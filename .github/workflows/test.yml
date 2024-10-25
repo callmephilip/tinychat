@@ -24,6 +24,9 @@ jobs:
         working-directory: .
         run: poetry install
 
-      - name: Run basic tests
+      - name: Make sure browsers are installed for Playwright
+        run: poetry run playwright install --with-deps
+
+      - name: Run tests
         run: poetry run pytest app.py
         continue-on-error: false
