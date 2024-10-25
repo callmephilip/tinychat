@@ -36,7 +36,6 @@ except ImportError: pass
 # re https://www.creative-tim.com/twcomponents/component/slack-clone-1
 # re https://systemdesign.one/slack-architecture/
 
-# TODO: send ping right away when changing channel
 # TODO: switch to cursor based pagination for messages
 # TODO: make message list scrolling work
 # TODO: figure out socket authentication
@@ -444,14 +443,9 @@ def channel_message(req: Request, cid: int):
 @rt('/c/{cid}')
 def channel(req: Request, cid: int):
     m, w, frm_id, msgs_id, channel = req.scope['m'], req.scope['w'], f"f-{cid}", f"msg-list-{cid}", channels[cid]
+    channel_name = channel.name if not channel.is_direct else channel_members(where=f"channel={cid} and member!={m.id}")[0].name
     
-    if not channel.is_direct:
-        channel_name = channel.name
-    else:
-        other_member: ChannelMember = channel_members(where=f"channel={cid} and member!={m.id}")[0]
-        channel_name = other_member.name
-
-    convo = Div(cls='border-b flex px-6 py-2 items-center flex-none', hx_trigger="every 5s", hx_vals=f'{{"command": "ping", "cid": {cid} }}', **{"ws_send": "true"})(
+    convo = Div(cls='border-b flex px-6 py-2 items-center flex-none', hx_trigger="load, every 5s", hx_vals=f'{{"command": "ping", "cid": {cid} }}', **{"ws_send": "true"})(
         Div(cls='flex flex-col')(
             H3(cls='text-grey-darkest mb-1 font-extrabold')(f"#{channel_name}"),
             Div("Chit-chattin' about ugly HTML and mixing of concerns.", cls='text-grey-dark text-sm truncate')
@@ -542,249 +536,252 @@ serve()
 
 ## ================================ Tests
 
-@pytest.fixture(scope="function", autouse=True)
-def create_test_database():
-    setup_database(test=True)
-    # yield
-    # db.conn.close()
+try:
+    @pytest.fixture(scope="function", autouse=True)
+    def create_test_database():
+        setup_database(test=True)
+        # yield
+        # db.conn.close()
 
-@pytest.fixture()
-def client():
-    yield Client(app)
+    @pytest.fixture()
+    def client():
+        yield Client(app)
 
-def test_commands():
-    cmd = Command.from_json("ping", '{"cid": 1}')
-    assert isinstance(cmd, PingCommand)
-    assert cmd.cid == 1
+    def test_commands():
+        cmd = Command.from_json("ping", '{"cid": 1}')
+        assert isinstance(cmd, PingCommand)
+        assert cmd.cid == 1
 
-def test_healthcheck(client):
-    response = client.get('/healthcheck')
-    assert response.status_code == 200
-    assert response.json() == {"status": "ok"}
+    def test_healthcheck(client):
+        response = client.get('/healthcheck')
+        assert response.status_code == 200
+        assert response.json() == {"status": "ok"}
 
-def test_auth(client):
-    assert len(users()) == 0
-    assert len(workspaces()) == 1
-    assert len(channels()) == 2
-    assert len(members()) == 0
-    assert len(channel_members()) == 0
+    def test_auth(client):
+        assert len(users()) == 0
+        assert len(workspaces()) == 1
+        assert len(channels()) == 2
+        assert len(members()) == 0
+        assert len(channel_members()) == 0
 
-    response: Response = client.get('/')
+        response: Response = client.get('/')
 
-    assert response.status_code == 303
-    assert response.headers['location'] == '/login'
+        assert response.status_code == 303
+        assert response.headers['location'] == '/login'
 
-    response = client.post('/login', data={"name": "Philip", "email": "philip@thebakery.io"})
-    
-    assert len(users()) == 1
-    assert len(members()) == 1
-    assert len(channel_members()) == 2
+        response = client.post('/login', data={"name": "Philip", "email": "philip@thebakery.io"})
+        
+        assert len(users()) == 1
+        assert len(members()) == 1
+        assert len(channel_members()) == 2
 
-    assert response.status_code == 303
-    assert response.headers['location'] == '/'
+        assert response.status_code == 303
+        assert response.headers['location'] == '/'
 
-def test_message_seen(client):
-    u1, u2, workspace, channel = users.insert(User(name="Philip", email="p@g.com")), users.insert(User(name="John", email="j@g.com")), workspaces()[0], channels()[0]
-    m1, m2 = members.insert(Member(user_id=u1.id, workspace_id=workspace.id)), members.insert(Member(user_id=u2.id, workspace_id=workspace.id))
-    cm1, cm2 = channel_members.insert(ChannelMember(channel=channel.id, member=m1.id)), channel_members.insert(ChannelMember(channel=channel.id, member=m2.id))
+    def test_message_seen(client):
+        u1, u2, workspace, channel = users.insert(User(name="Philip", email="p@g.com")), users.insert(User(name="John", email="j@g.com")), workspaces()[0], channels()[0]
+        m1, m2 = members.insert(Member(user_id=u1.id, workspace_id=workspace.id)), members.insert(Member(user_id=u2.id, workspace_id=workspace.id))
+        cm1, cm2 = channel_members.insert(ChannelMember(channel=channel.id, member=m1.id)), channel_members.insert(ChannelMember(channel=channel.id, member=m2.id))
 
-    # no messages in the channel
-    assert channel.last_message_ts is None 
+        # no messages in the channel
+        assert channel.last_message_ts is None 
 
-    # user 1 sends message to the channel
-    msg = channel_messages.insert(ChannelMessage(channel=channel.id, sender=m1.id, message="hello"))
-    assert channel.last_message_ts == msg.created_at
+        # user 1 sends message to the channel
+        msg = channel_messages.insert(ChannelMessage(channel=channel.id, sender=m1.id, message="hello"))
+        assert channel.last_message_ts == msg.created_at
 
-    c4m1, c4m2 = ChannelForMember.from_channel_member(cm1), ChannelForMember.from_channel_member(cm2)
+        c4m1, c4m2 = ChannelForMember.from_channel_member(cm1), ChannelForMember.from_channel_member(cm2)
 
-    assert c4m1.has_unread_messages is False
-    assert c4m2.has_unread_messages is True
+        assert c4m1.has_unread_messages is False
+        assert c4m2.has_unread_messages is True
 
-    # sleep a bit (so timestamps work correctly)
-    time.sleep(0.1)
+        # sleep a bit (so timestamps work correctly)
+        time.sleep(0.1)
 
-    # user 2 sends a message to the channel, seen indicator should be updated
-    channel_messages.insert(ChannelMessage(channel=channel.id, sender=m2.id, message="hey"))
+        # user 2 sends a message to the channel, seen indicator should be updated
+        channel_messages.insert(ChannelMessage(channel=channel.id, sender=m2.id, message="hey"))
 
-    c4m1, c4m2 = ChannelForMember.from_channel_member(cm1), ChannelForMember.from_channel_member(cm2)
+        c4m1, c4m2 = ChannelForMember.from_channel_member(cm1), ChannelForMember.from_channel_member(cm2)
 
-    assert c4m1.has_unread_messages is True
-    assert c4m2.has_unread_messages is False
+        assert c4m1.has_unread_messages is True
+        assert c4m2.has_unread_messages is False
 
-    # can mark all as read
-    c4m1 = c4m1.mark_all_as_read()
+        # can mark all as read
+        c4m1 = c4m1.mark_all_as_read()
 
-    assert c4m1.has_unread_messages is False
+        assert c4m1.has_unread_messages is False
 
-    # direct messages: steven messages philip
-    client.post('/login', data={"name": "Steven", "email": "steve@thebakery.io"})
+        # direct messages: steven messages philip
+        client.post('/login', data={"name": "Steven", "email": "steve@thebakery.io"})
 
-    u3 = users(where="email='steve@thebakery.io'")[0]
-    m3 = members(where=f"user_id={u3.id}")[0]
+        u3 = users(where="email='steve@thebakery.io'")[0]
+        m3 = members(where=f"user_id={u3.id}")[0]
 
-    client.get(f'/direct/{m1.id}')
+        client.get(f'/direct/{m1.id}')
 
-    assert len(channels(where="is_direct=1")) == 1
+        assert len(channels(where="is_direct=1")) == 1
 
-    direct_channel = channels(where="is_direct=1")[0]
+        direct_channel = channels(where="is_direct=1")[0]
 
-    dc_members = channel_members(where=f"channel={direct_channel.id}")
+        dc_members = channel_members(where=f"channel={direct_channel.id}")
 
-    # no unread messages at first
-    for dc_member in dc_members: assert ChannelForMember.from_channel_member(dc_member).has_unread_messages is False
+        # no unread messages at first
+        for dc_member in dc_members: assert ChannelForMember.from_channel_member(dc_member).has_unread_messages is False
 
-    # steven marks all as read (via ping)
-    assert dc_members[1].member == m3.id
-    ChannelForMember.from_channel_member(dc_members[1]).mark_all_as_read()
+        # steven marks all as read (via ping)
+        assert dc_members[1].member == m3.id
+        ChannelForMember.from_channel_member(dc_members[1]).mark_all_as_read()
 
-    # double check list of channels for member
-    c4m = ListOfChannelsForMember(member=m3)
+        # double check list of channels for member
+        c4m = ListOfChannelsForMember(member=m3)
 
-    assert len(c4m.direct_channels) == 1
-    assert c4m.direct_channels[0].channel_member.member == m3.id
-    assert c4m.direct_channels[0].has_unread_messages is False
+        assert len(c4m.direct_channels) == 1
+        assert c4m.direct_channels[0].channel_member.member == m3.id
+        assert c4m.direct_channels[0].has_unread_messages is False
 
-    # check channels for philip
-    c4m = ListOfChannelsForMember(member=m1)
+        # check channels for philip
+        c4m = ListOfChannelsForMember(member=m1)
 
-    assert len(c4m.direct_channels) == 1
-    assert c4m.direct_channels[0].channel_member.member == m1.id
-    assert c4m.direct_channels[0].has_unread_messages is False
+        assert len(c4m.direct_channels) == 1
+        assert c4m.direct_channels[0].channel_member.member == m1.id
+        assert c4m.direct_channels[0].has_unread_messages is False
 
-    # philip sends a message
-    channel_messages.insert(ChannelMessage(channel=direct_channel.id, sender=m1.id, message="hello"))
+        # philip sends a message
+        channel_messages.insert(ChannelMessage(channel=direct_channel.id, sender=m1.id, message="hello"))
 
-    # steven should have unread messages
-    assert ChannelForMember.from_channel_member(dc_members[1]).has_unread_messages is True
-    # philip should not
-    assert ChannelForMember.from_channel_member(dc_members[0]).has_unread_messages is False
+        # steven should have unread messages
+        assert ChannelForMember.from_channel_member(dc_members[1]).has_unread_messages is True
+        # philip should not
+        assert ChannelForMember.from_channel_member(dc_members[0]).has_unread_messages is False
 
-    # double check list of channels for member
+        # double check list of channels for member
 
-    c4m = ListOfChannelsForMember(member=m3)
+        c4m = ListOfChannelsForMember(member=m3)
 
-    assert len(c4m.direct_channels) == 1
-    assert c4m.direct_channels[0].channel_member.member == m3.id
-    assert c4m.direct_channels[0].channel_name == "Philip"
-    assert c4m.direct_channels[0].has_unread_messages is True
-    
-    c4m = ListOfChannelsForMember(member=m1)
+        assert len(c4m.direct_channels) == 1
+        assert c4m.direct_channels[0].channel_member.member == m3.id
+        assert c4m.direct_channels[0].channel_name == "Philip"
+        assert c4m.direct_channels[0].has_unread_messages is True
+        
+        c4m = ListOfChannelsForMember(member=m1)
 
-    assert len(c4m.direct_channels) == 1
-    assert c4m.direct_channels[0].channel_member.member == m1.id
-    assert c4m.direct_channels[0].channel_name == "Steven"
-    assert c4m.direct_channels[0].has_unread_messages is False
+        assert len(c4m.direct_channels) == 1
+        assert c4m.direct_channels[0].channel_member.member == m1.id
+        assert c4m.direct_channels[0].channel_name == "Steven"
+        assert c4m.direct_channels[0].has_unread_messages is False
 
 
-def test_direct_channel_setup(client):
-    u1, workspace = users.insert(User(name="Philip", email="p@g.com")), workspaces()[0]
-    m1 = members.insert(Member(user_id=u1.id, workspace_id=workspace.id))
+    def test_direct_channel_setup(client):
+        u1, workspace = users.insert(User(name="Philip", email="p@g.com")), workspaces()[0]
+        m1 = members.insert(Member(user_id=u1.id, workspace_id=workspace.id))
 
-    assert len(channels()) == 2
-    assert len(channels(where="is_direct=1")) == 0
+        assert len(channels()) == 2
+        assert len(channels(where="is_direct=1")) == 0
 
-    # Bob registers (and logs in)
-    client.post('/login', data={"name": "Bob", "email": "bob@thebakery.io"})
+        # Bob registers (and logs in)
+        client.post('/login', data={"name": "Bob", "email": "bob@thebakery.io"})
 
-    u2 = users(where="email='bob@thebakery.io'")[0]
-    m2 = members(where=f"user_id={u2.id}")[0]
+        u2 = users(where="email='bob@thebakery.io'")[0]
+        m2 = members(where=f"user_id={u2.id}")[0]
 
-    # Bob wants to message Philip
-    client.get(f'/direct/{m1.id}')
+        # Bob wants to message Philip
+        client.get(f'/direct/{m1.id}')
 
-    assert len(channels(where="is_direct=1")) == 1
+        assert len(channels(where="is_direct=1")) == 1
 
-    direct_channel = channels(where="is_direct=1")[0]
+        direct_channel = channels(where="is_direct=1")[0]
 
-    assert direct_channel.name == "Bob-Philip"
+        assert direct_channel.name == "Bob-Philip"
 
-    direct_channel_members = channel_members(where=f"channel={direct_channel.id}")
+        direct_channel_members = channel_members(where=f"channel={direct_channel.id}")
 
-    assert len(direct_channel_members) == 2
-    assert direct_channel_members[0].member == m1.id
-    assert direct_channel_members[1].member == m2.id
+        assert len(direct_channel_members) == 2
+        assert direct_channel_members[0].member == m1.id
+        assert direct_channel_members[1].member == m2.id
 
-    # make sure new channel is not recreated
-    client.get(f'/direct/{m1.id}')
+        # make sure new channel is not recreated
+        client.get(f'/direct/{m1.id}')
 
-    assert len(channels(where="is_direct=1")) == 1
+        assert len(channels(where="is_direct=1")) == 1
 
-def test_list_of_channels_for_member(client):
-    assert len(users()) == 0
-    assert len(workspaces()) == 1
-    assert len(channels()) == 2
+    def test_list_of_channels_for_member(client):
+        assert len(users()) == 0
+        assert len(workspaces()) == 1
+        assert len(channels()) == 2
 
-    # philip signs up and logs in
-    
-    client.post('/login', data={"name": "Philip", "email": "philip@thebakery.io"})
-    
-    u1 = users(where="email='philip@thebakery.io'")[0]
-    m1 = members(where=f"user_id={u1.id}")[0]
+        # philip signs up and logs in
+        
+        client.post('/login', data={"name": "Philip", "email": "philip@thebakery.io"})
+        
+        u1 = users(where="email='philip@thebakery.io'")[0]
+        m1 = members(where=f"user_id={u1.id}")[0]
 
-    c4m = ListOfChannelsForMember(member=m1)
+        c4m = ListOfChannelsForMember(member=m1)
 
-    assert len(c4m.group_channels) == 2
-    assert len(c4m.direct_channels) == 0
-    assert len(c4m.direct_channel_placeholders) == 0
-    assert c4m.group_channels[0].channel_name == "general"
-    assert c4m.group_channels[1].channel_name == "random"
+        assert len(c4m.group_channels) == 2
+        assert len(c4m.direct_channels) == 0
+        assert len(c4m.direct_channel_placeholders) == 0
+        assert c4m.group_channels[0].channel_name == "general"
+        assert c4m.group_channels[1].channel_name == "random"
 
-    # bob signs up and logs in
+        # bob signs up and logs in
 
-    client.post('/login', data={"name": "Bob", "email": "bob@thebakery.io"})
+        client.post('/login', data={"name": "Bob", "email": "bob@thebakery.io"})
 
-    u2 = users(where="email='bob@thebakery.io'")[0]
-    m2 = members(where=f"user_id={u2.id}")[0]
+        u2 = users(where="email='bob@thebakery.io'")[0]
+        m2 = members(where=f"user_id={u2.id}")[0]
 
-    c4m = ListOfChannelsForMember(member=m2)
+        c4m = ListOfChannelsForMember(member=m2)
 
-    assert len(c4m.group_channels) == 2
-    assert len(c4m.direct_channels) == 0
-    assert len(c4m.direct_channel_placeholders) == 1
+        assert len(c4m.group_channels) == 2
+        assert len(c4m.direct_channels) == 0
+        assert len(c4m.direct_channel_placeholders) == 1
 
-    assert c4m.direct_channel_placeholders[0].member.name == "Philip"
+        assert c4m.direct_channel_placeholders[0].member.name == "Philip"
 
-    # bob wants to message philip
+        # bob wants to message philip
 
-    client.get(f'/direct/{m1.id}')
+        client.get(f'/direct/{m1.id}')
 
-    c4m = ListOfChannelsForMember(member=m2)
+        c4m = ListOfChannelsForMember(member=m2)
 
-    assert len(c4m.group_channels) == 2
-    assert len(c4m.direct_channels) == 1
-    assert len(c4m.direct_channel_placeholders) == 0
+        assert len(c4m.group_channels) == 2
+        assert len(c4m.direct_channels) == 1
+        assert len(c4m.direct_channel_placeholders) == 0
 
-    assert c4m.direct_channels[0].channel_name == "Philip"
+        assert c4m.direct_channels[0].channel_name == "Philip"
 
-    # steven signs up and logs in
+        # steven signs up and logs in
 
-    client.post('/login', data={"name": "Steven", "email": "steve@thebakery.io"})
+        client.post('/login', data={"name": "Steven", "email": "steve@thebakery.io"})
 
-    u3 = users(where="email='steve@thebakery.io'")[0]
-    m3 = members(where=f"user_id={u3.id}")[0]
+        u3 = users(where="email='steve@thebakery.io'")[0]
+        m3 = members(where=f"user_id={u3.id}")[0]
 
-    c4m = ListOfChannelsForMember(member=m3)
+        c4m = ListOfChannelsForMember(member=m3)
 
-    assert len(c4m.group_channels) == 2
-    assert len(c4m.direct_channels) == 0
-    assert len(c4m.direct_channel_placeholders) == 2
+        assert len(c4m.group_channels) == 2
+        assert len(c4m.direct_channels) == 0
+        assert len(c4m.direct_channel_placeholders) == 2
 
-    assert c4m.direct_channel_placeholders[0].member.name == "Philip"
-    assert c4m.direct_channel_placeholders[1].member.name == "Bob"
+        assert c4m.direct_channel_placeholders[0].member.name == "Philip"
+        assert c4m.direct_channel_placeholders[1].member.name == "Bob"
 
-    # steven wants to message bob
+        # steven wants to message bob
 
-    client.get(f'/direct/{m2.id}')
+        client.get(f'/direct/{m2.id}')
 
-    c4m = ListOfChannelsForMember(member=m3)
+        c4m = ListOfChannelsForMember(member=m3)
 
-    assert len(c4m.group_channels) == 2
-    assert len(c4m.direct_channels) == 1
-    assert len(c4m.direct_channel_placeholders) == 1
+        assert len(c4m.group_channels) == 2
+        assert len(c4m.direct_channels) == 1
+        assert len(c4m.direct_channel_placeholders) == 1
 
-    assert c4m.direct_channels[0].channel_name == "Bob"
-    assert c4m.direct_channel_placeholders[0].member.name == "Philip"
+        assert c4m.direct_channels[0].channel_name == "Bob"
+        assert c4m.direct_channel_placeholders[0].member.name == "Philip"
 
-def test_login_flow(page: Page):
-    page.goto("http://localhost:5001")
-    assert page.url == "http://localhost:5001/login"
+    def test_login_flow(page: Page):
+        page.goto("http://localhost:5001")
+        assert page.url == "http://localhost:5001/login"
+
+except: pass
