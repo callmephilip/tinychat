@@ -1,4 +1,5 @@
-import logging, json, time, dataclasses, typing, hashlib, urllib
+import logging, json, time, dataclasses, typing, hashlib, urllib, base64
+from lorem_text import lorem
 from fasthtml.common import *
 from shad4fast import *
 from tractor import connect_tractor
@@ -7,7 +8,6 @@ try:
     import pytest
     from playwright.sync_api import Page, expect
 except ImportError: pass
-
 
 # +-------------------------------+-------------------------------+
 # | Channels                       | # general                     |
@@ -36,6 +36,7 @@ except ImportError: pass
 # re https://www.creative-tim.com/twcomponents/component/slack-clone-1
 # re https://systemdesign.one/slack-architecture/
 
+# TODO: when new message arrives, auto scroll to the bottom
 # TODO: switch to cursor based pagination for messages
 # TODO: make message list scrolling work
 # TODO: figure out socket authentication
@@ -58,11 +59,23 @@ def check_auth(req, sess):
     # to ensure that the user can only see/edit their own todos.
     # todos.xtra(name=auth)
 
+def get_ts() -> int: return int(time.time() * 1000)
+
 bware = Beforeware(check_auth, skip=[r'/favicon\.ico', r'/static/.*', r'.*\.css', '/login', '/healthcheck'])
 
 app = FastHTMLWithLiveReload(debug=True, hdrs=[
     ShadHead(tw_cdn=True),
     Script(src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js", defer=True),
+    Style("""
+        #messages-loading {
+          background-color: red;
+        }
+          
+        #messages-loading.htmx-request {
+          height: 100px;
+          background-color: yellow;
+        }
+    """),
 ], exts="ws", before=bware)
 rt = app.route
 
@@ -76,18 +89,17 @@ def get_image_url(email: str, s=250, d="https://www.example.com/default.jpg") ->
 # socket connections socket_id -> send
 connections: Dict[str, typing.Awaitable] = {}
 
-MESSAGE_HISTORY_PAGE_SIZE = 40
-
 @dataclass
 class Settings:
     workspace_name: str = "The Bakery"
     default_channels: List[str] = dataclasses.field(default_factory=lambda: ["general", "random"])
+    message_history_page_size = 40
 
 
 settings = Settings()
 
 @dataclass(kw_only=True)
-class TsRec: created_at: int = dataclasses.field(default_factory=lambda: int(time.time() * 1000))
+class TsRec: created_at: int = dataclasses.field(default_factory=get_ts)
 
 @dataclass(kw_only=True)
 class User(TsRec): id: int; name: str; email: str; image_url: str; is_account_enabled: bool = True
@@ -179,11 +191,49 @@ class ChannelMessageWCtx:
     id: int; created_at: int; message: str; u_name: str; u_image_url: str; c_id: int; c_name: str
 
     @staticmethod
-    def latest(cid: int, offset: int = 0) -> Tuple[List['ChannelMessageWCtx'], int]:
-        return list(map(lambda args: ChannelMessageWCtx(*args), db.execute(f"""
-            SELECT id, created_at, message, u_name, u_image_url, c_id, c_name
-            FROM messages_w_ctx WHERE c_id={cid} ORDER BY created_at DESC LIMIT {MESSAGE_HISTORY_PAGE_SIZE} OFFSET {offset}
-        """)))[::-1], offset + MESSAGE_HISTORY_PAGE_SIZE
+    def encode_cursor(ts: int, direction: typing.Literal["prev", "next"]) -> str: return str(base64.b64encode(f"{ts}-{direction}".encode("ascii")), encoding="ascii") 
+
+    @staticmethod
+    def decode_cursor(cursor: str) -> Tuple[int, str]:
+        r = tuple(map(lambda x: x.decode("ascii"), base64.b64decode(cursor).split(b"-")))
+        return int(r[0]), r[1]
+
+    @staticmethod
+    def fetch(cid: int, cursor: Optional[str] = None) -> Tuple[List['ChannelMessageWCtx'], Optional[str], Optional[str]]:
+        # returns list of messages, previous and next cursors
+
+        prev_cursor, next_cursor = None, None
+        ts, direction = ChannelMessageWCtx.decode_cursor(cursor) if cursor else (0, None)
+
+        q = f"""SELECT id, created_at, message, u_name, u_image_url, c_id, c_name FROM messages_w_ctx WHERE c_id={cid}"""
+
+        if not cursor: q = f"""{q} ORDER BY created_at DESC LIMIT {settings.message_history_page_size}"""
+        elif direction == "prev": q = f"""{q} AND created_at < {ts} ORDER BY created_at DESC LIMIT {settings.message_history_page_size}"""
+        else: q = f"""{q} AND created_at > {ts} ORDER BY created_at ASC LIMIT {settings.message_history_page_size}"""
+        
+        rs = list(map(lambda args: ChannelMessageWCtx(*args), db.execute(q)))
+        rs = rs[::-1] if not cursor or direction == "prev" else rs
+        
+        if len(rs) == 0: return [], prev_cursor, next_cursor
+
+        if cursor:
+            if direction == "prev":
+                # if we are going back, then previous cursor exists if we have enough messages
+                prev_cursor = ChannelMessageWCtx.encode_cursor(rs[0].created_at, "prev") if len(rs) == settings.message_history_page_size else None
+                # next cursor should exist
+                next_cursor = ChannelMessageWCtx.encode_cursor(rs[-1].created_at, "next")
+            else:
+                # if we are going forward, then next cursor exists if we have enough messages
+                next_cursor = ChannelMessageWCtx.encode_cursor(rs[-1].created_at, "next") if len(rs) == settings.message_history_page_size else None
+                # previous cursor should exist
+                prev_cursor = ChannelMessageWCtx.encode_cursor(rs[0].created_at, "prev")
+        else:
+            # when no cursor is provided, we can only move backwards, assuming there are enough messages
+            prev_cursor = ChannelMessageWCtx.encode_cursor(rs[0].created_at, "prev") if len(rs) == settings.message_history_page_size else None 
+
+        return rs, prev_cursor, next_cursor
+
+
     
     @staticmethod
     def by_id(message_id: int) -> 'ChannelMessageWCtx':
@@ -307,7 +357,7 @@ def __ft__(self: ChannelMessage): return Div('👤', Strong(self.name))
 
 @patch
 def __ft__(self: ChannelMessageWCtx):
-    return Div(cls='flex items-start mb-4 text-sm')(
+    return Div(cls='chat-message flex items-start mb-4 text-sm')(
         Img(src=self.u_image_url, cls='w-10 h-10 rounded mr-3'),
         Div(cls='flex-1 overflow-hidden')(
             Div(
@@ -352,7 +402,6 @@ def Layout(content: FT, m: Member, w: Workspace) -> FT:
         ),
         Div(id="main", cls="flex-1 flex flex-col bg-white overflow-hidden")(content),
         HtmxOn('wsConfigSend', """
-            console.log(">>>>>>>>>>>>>>>>>>>>>>", event);
             if (event.detail.parameters.command !== "ping") { throw new Error(`Invalid command: ${event.detail.parameters.command}`) }
             
             event.detail.parameters = {
@@ -361,7 +410,19 @@ def Layout(content: FT, m: Member, w: Workspace) -> FT:
                auth: { mid: document.querySelector("body").getAttribute("data-mid") }
             };
         """
-        )
+        ),
+        HtmxOn('oobAfterSwap', """
+            if (event.detail.target.id.match(/channel-[0-9]+/ig)) {
+               console.log(">>>>> current scroll top is", event.detail.target.scrollTop);
+               console.log(">>>>> current scroll height is", event.detail.target.scrollHeight);
+               console.log(">>>>> ratio is", event.detail.target.scrollTop / event.detail.target.scrollHeight);
+
+               if (event.detail.target.scrollTop / event.detail.target.scrollHeight > 0.2) {
+                    // scroll to the bottom
+                    event.detail.target.scrollTop = event.detail.target.scrollHeight;
+               }
+            }
+        """),
     )
 
 @dataclass
@@ -388,6 +449,13 @@ def post(login:Login, sess):
     for channel in channels(where=f"workspace_id={workspace.id} and name in ({default_channels})"):
         channel_members.insert(ChannelMember(channel=channel.id, member=member.id))
     sess['mid'], sess['wid'] = member.id, workspace.id
+
+    # TODO: remove this
+    # add a bunch of messages to scroll through
+    if channel_messages.count < 500:
+        ts, target_channel = get_ts(), channels()[0]
+        for i in range(1200): channel_messages.insert(ChannelMessage(created_at=ts + i, channel=target_channel.id, sender=member.id, message=f"{i+1} {lorem.sentence()}"))
+
     return RedirectResponse('/', status_code=303)
 
 
@@ -410,7 +478,9 @@ async def dispatch_incoming_message(m: ChannelMessage):
         # send message to each socket
         for c_s in s:
             logger.debug(f"sending message to {c_s.sid} {connections[c_s.sid]}")
-            await connections[c_s.sid](Div(id=f"msg-list-{m.channel}", hx_swap_oob="beforeend")(m_with_ctx))
+            await connections[c_s.sid](Div(id=f"channel-{m.channel}", hx_swap="scroll:bottom", hx_swap_oob="beforeend", **{
+                "hx-on::after-settle ": f"""console.log('all settled')"""
+            })(m_with_ctx))
             await connections[c_s.sid](ListOfChannelsForMember(member=members[member.member]))
 
 @rt('/messages/send', methods=['POST'])
@@ -422,27 +492,34 @@ def send_msg(msg:str, cid:int, req: Request):
 
 @rt('/c/messages/{cid}')
 def channel_message(req: Request, cid: int):
-    # get offset from query params
-    offset = int(req.query_params.get("offset", 0))
-    msgs, new_offset = ChannelMessageWCtx.latest(cid, offset)
-    logger.debug(f"MESSAGES: {len(msgs)}")
-    
-    s = f"""el.scrollTop = el.scrollHeight;""" if offset == 0 else ""
-    
-    return Div(x_init=f"""
-        function(offset){{
-            const el = document.getElementById("msg-list-{cid}");
-            console.log(">>>>>>>>> messages are in, yo.", offset, el);
-            el.setAttribute("hx-get", "/c/messages/{cid}?offset=" + offset);
+    if req.query_params.get("c"): time.sleep(10)
+    msgs, prev_cursor, next_cursor = ChannelMessageWCtx.fetch(cid, req.query_params.get("c"))
+    return Div(**{"data-prev": prev_cursor, "data-next": next_cursor, "x-init": f"""
+        function(cursor){{
+            const el = document.getElementById("channel-{cid}");
+            el.setAttribute("hx-get", "/c/messages/{cid}?c=" + cursor);
+            el.setAttribute("hx-indicator", "#messages-loading");
+            el.setAttribute("hx-on::before-request", "console.log('>>>>>>>>>>>>>>>>>>> before request <<<<<<<<<<<<<<<<<<'); /*const el = document.getElementById('channel-{cid}'); el.scrollTop = el.scrollTop - 1400; */ ");
+
+            // create new div and insert it as first child in the scroller
+            // remove element with id messages-loading if it exists
+            let loadingIndicator = document.getElementById("messages-loading");
+            if (loadingIndicator) loadingIndicator.remove();
+
+            loadingIndicator = document.createElement("div");
+            loadingIndicator.id = "messages-loading";
+            loadingIndicator.classList.add("htmx-indicator");
+            el.insertBefore(loadingIndicator, el.firstChild);
+
             htmx.process(el);
-        }}({new_offset})  
-    """), *msgs
+        }}("{prev_cursor}")
+        """ }), *msgs
     # ⬆️ only include scroller if it looks like we have more messages to load 
 
 
 @rt('/c/{cid}')
 def channel(req: Request, cid: int):
-    m, w, frm_id, msgs_id, channel = req.scope['m'], req.scope['w'], f"f-{cid}", f"msg-list-{cid}", channels[cid]
+    m, w, frm_id, msgs_id, channel = req.scope['m'], req.scope['w'], f"f-{cid}", f"channel-{cid}", channels[cid]
     channel_name = channel.name if not channel.is_direct else channel_members(where=f"channel={cid} and member!={m.id}")[0].name
     
     convo = Div(cls='border-b flex px-6 py-2 items-center flex-none', hx_trigger="load, every 5s", hx_vals=f'{{"command": "ping", "cid": {cid} }}', **{"ws_send": "true"})(
@@ -450,26 +527,44 @@ def channel(req: Request, cid: int):
             H3(cls='text-grey-darkest mb-1 font-extrabold')(f"#{channel_name}"),
             Div("Chit-chattin' about ugly HTML and mixing of concerns.", cls='text-grey-dark text-sm truncate')
         ),
-    ), Div(id=msgs_id, hx_swap="afterbegin", hx_trigger="scroll[checkChatWindowScroll()] delay:500ms", cls='scroller px-6 py-4 flex-1 overflow-y-scroll')(
+    ), Div(id=msgs_id, hx_swap="afterbegin focus-scroll:false", hx_trigger="scroll[checkChatWindowScroll()] delay:500ms", cls='scroller px-6 py-4 flex-1 overflow-y-scroll')(
         Div(hx_trigger="load", hx_get=f"/c/messages/{cid}", hx_swap="outerHTML", style="height: 4000px;", x_init=f"""
             function(){{
                 const offset = 240;
-                const el = document.getElementById("msg-list-{cid}");
+                const el = document.getElementById("channel-{cid}");
                 el.scrollTop = el.scrollHeight;
                 window.checkChatWindowScroll = function() {{
-                    console.log(">>>>>>>>>>> checking scroll position", el.scrollTop);
-                    return el.scrollTop <= offset;
+                    // get first child of el
+                    if (document.querySelector(".chat-message")) {{
+                        const parent = el.getBoundingClientRect();
+                        const child = document.querySelector(".chat-message").getBoundingClientRect();
+                        const inView = (
+                                rect.top >= parentRect.top &&
+                                rect.left >= parentRect.left &&
+                                rect.bottom <= parentRect.bottom &&
+                                rect.right <= parentRect.right
+                        );
+                        console.log(">>>>>>>>>>> in view >>>>>>>>>>", inView);
+                    }}
+                    
+                    
+
+                    return false;
+                    // if (el.scrollTop <= offset) {{
+                    //    console.log(">>>>>>>>>>> gonna issue request!", el.scrollTop, offset);
+                    // }}
+                    /// return el.scrollTop <= offset;
                 }}
             }}()
            """
-        )
+        ),
     ), Div(cls='pb-6 px-4 flex-none')(
         Div(cls='flex rounded-lg border-2 border-grey overflow-hidden')(
             Span(cls='text-3xl text-grey border-r-2 border-grey p-2')(
                 NotStr("""<svg class="fill-current h-6 w-6 block" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20"><path d="M16 10c0 .553-.048 1-.601 1H11v4.399c0 .552-.447.601-1 .601-.553 0-1-.049-1-.601V11H4.601C4.049 11 4 10.553 4 10c0-.553.049-1 .601-1H9V4.601C9 4.048 9.447 4 10 4c.553 0 1 .048 1 .601V9h4.399c.553 0 .601.447.601 1z"></path></svg>""")
             ),
             Form(id=frm_id, hx_post="/messages/send", hx_target=f"#{msgs_id}", hx_swap="beforeend",
-                 **{ "hx-on::after-request": f"""document.querySelector("#{frm_id}").reset();"""}
+                 **{ "hx-on::after-request": f"""document.querySelector("#{frm_id}").reset(); document.getElementById("{msgs_id}").scrollTop = document.getElementById("{msgs_id}").scrollHeight;""" }
             )(
                 Input(id='msg'),
                 Input(name='cid', type="hidden", value=cid)
@@ -779,6 +874,64 @@ try:
 
         assert c4m.direct_channels[0].channel_name == "Bob"
         assert c4m.direct_channel_placeholders[0].member.name == "Philip"
+
+    def test_channel_message_pagination():
+        # mess with cursor encoding/decoding
+
+        t = get_ts()
+        cursor = ChannelMessageWCtx.encode_cursor(t, "prev")
+        assert ChannelMessageWCtx.decode_cursor(cursor) == (t, "prev")
+
+        u, workspace, channel = users.insert(User(name="Philip", email="p@g.com")), workspaces()[0], channels()[0]
+        m  = members.insert(Member(user_id=u.id, workspace_id=workspace.id))
+        channel_members.insert(ChannelMember(channel=channel.id, member=m.id))
+
+        # insert a bunch of messages
+        for i in range(1000): channel_messages.insert(ChannelMessage(created_at=t+i, channel=channel.id, sender=m.id, message=f"hello {i + 1}"))
+
+        assert len(channel_messages()) == 1000
+
+        msg_batch, prev_cursor, next_cursor = ChannelMessageWCtx.fetch(channel.id)
+
+        assert len(msg_batch) == settings.message_history_page_size
+        assert msg_batch[-1].message == "hello 1000"
+        assert msg_batch[0].message == "hello 961"
+        assert next_cursor is None
+        assert prev_cursor is not None
+
+        msg_batch, prev_cursor, next_cursor = ChannelMessageWCtx.fetch(channel.id, prev_cursor)
+
+        assert len(msg_batch) == settings.message_history_page_size
+        assert msg_batch[-1].message == "hello 960"
+        assert next_cursor is not None
+        assert prev_cursor is not None
+
+        # try going back using next_cursor
+
+        msg_batch, prev_cursor, next_cursor = ChannelMessageWCtx.fetch(channel.id, next_cursor)
+        assert msg_batch[-1].message == "hello 1000"
+        assert msg_batch[0].message == "hello 961"
+        assert next_cursor is not None
+        assert prev_cursor is not None
+
+        # try going further next into the void of nothingness
+
+        msg_batch, prev_cursor, next_cursor = ChannelMessageWCtx.fetch(channel.id, next_cursor)
+        assert len(msg_batch) == 0
+        assert prev_cursor is None
+        assert next_cursor is None
+
+        # try powering all the way back
+        c = None
+        for _ in range(1000 // settings.message_history_page_size - 1):
+            msg_batch, prev_cursor, _ = ChannelMessageWCtx.fetch(channel.id, c)
+            c = prev_cursor
+            assert len(msg_batch) == settings.message_history_page_size
+            assert prev_cursor is not None
+        msg_batch, _, _ = ChannelMessageWCtx.fetch(channel.id, c)
+        assert len(msg_batch) == settings.message_history_page_size
+        assert msg_batch[0].message == "hello 1"
+
 
     def test_login_flow(page: Page):
         page.goto("http://localhost:5001")
