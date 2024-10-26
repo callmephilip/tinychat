@@ -36,9 +36,7 @@ except ImportError: pass
 # re https://www.creative-tim.com/twcomponents/component/slack-clone-1
 # re https://systemdesign.one/slack-architecture/
 
-# TODO: when new message arrives, auto scroll to the bottom
-# TODO: switch to cursor based pagination for messages
-# TODO: make message list scrolling work
+
 # TODO: figure out socket authentication
 # TODO: support markdown in messages?
 # TODO: people can log out
@@ -476,7 +474,7 @@ async def dispatch_incoming_message(m: ChannelMessage):
         # send message to each socket
         for c_s in s:
             logger.debug(f"sending message to {c_s.sid} {connections[c_s.sid]}")
-            await connections[c_s.sid](Div(id=f"channel-{m.channel}", hx_swap="scroll:bottom", hx_swap_oob="beforeend", **{
+            await connections[c_s.sid](Div(id=f"channel-{m.channel}", hx_swap="scroll:bottom", hx_swap_oob="afterbegin", **{
                 "hx-on::after-settle ": f"""console.log('all settled')"""
             })(m_with_ctx))
             await connections[c_s.sid](ListOfChannelsForMember(member=members[member.member]))
@@ -531,7 +529,7 @@ def channel(req: Request, cid: int):
             Span(cls='text-3xl text-grey border-r-2 border-grey p-2')(
                 NotStr("""<svg class="fill-current h-6 w-6 block" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20"><path d="M16 10c0 .553-.048 1-.601 1H11v4.399c0 .552-.447.601-1 .601-.553 0-1-.049-1-.601V11H4.601C4.049 11 4 10.553 4 10c0-.553.049-1 .601-1H9V4.601C9 4.048 9.447 4 10 4c.553 0 1 .048 1 .601V9h4.399c.553 0 .601.447.601 1z"></path></svg>""")
             ),
-            Form(id=frm_id, hx_post="/messages/send", hx_target=f"#{msgs_id}", hx_swap="beforeend",
+            Form(id=frm_id, hx_post="/messages/send", hx_target=f"#{msgs_id}", hx_swap="afterbegin",
                  **{ "hx-on::after-request": f"""document.querySelector("#{frm_id}").reset(); document.getElementById("{msgs_id}").scrollTop = document.getElementById("{msgs_id}").scrollHeight;""" }
             )(
                 Input(id='msg'),
@@ -568,7 +566,9 @@ def on_conn(ws, send):
     
 def on_disconn(ws):
     sid = str(id(ws))
-    sockets.delete(sid)
+    try:
+        sockets.delete(sid)
+    except NotFoundError: pass
     connections.pop(sid, None)
 
 async def process_ping(cmd: PingCommand, member: Member):
@@ -586,7 +586,13 @@ async def ws(command:str, auth:dict, d: dict, ws):
 
     mid = int(auth['mid'])
     logger.debug(f"socket ID is {str(id(ws))}")
-    socket = sockets[str(id(ws))]
+    
+    try:
+        socket = sockets[str(id(ws))]
+    except NotFoundError:
+        logger.debug(f"socket not found")
+        return
+
     logger.debug(f"got socket {socket}")
     logger.debug(f"got command {command} with payload {json.dumps(d)}")
     
