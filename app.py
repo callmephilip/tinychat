@@ -6,7 +6,7 @@ from tractor import connect_tractor
 
 try:
     import pytest
-    from playwright.sync_api import Page, expect
+    from playwright.sync_api import Page
 except ImportError: pass
 
 # +-------------------------------+-------------------------------+
@@ -36,7 +36,7 @@ except ImportError: pass
 # re https://www.creative-tim.com/twcomponents/component/slack-clone-1
 # re https://systemdesign.one/slack-architecture/
 
-
+# TODO: check on scroller for when there are few messages. only add stuff when we have cursors and all
 # TODO: figure out socket authentication
 # TODO: support markdown in messages?
 # TODO: people can log out
