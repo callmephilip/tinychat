@@ -2,6 +2,7 @@ import logging, json, time, dataclasses, typing, hashlib, urllib, base64, random
 from lorem_text import lorem
 from fasthtml.common import *
 from shad4fast import *
+from shad4fast.components.button import btn_variants, btn_base_cls, btn_sizes
 from tractor import connect_tractor
 
 try:
@@ -62,6 +63,7 @@ def check_auth(req, sess):
     # todos.xtra(name=auth)
 
 def get_ts() -> int: return int(time.time() * 1000)
+def clsx(*args): return " ".join([arg for arg in args if arg])
 
 bware = Beforeware(check_auth, skip=[r'/favicon\.ico', r'/static/.*', r'.*\.css', '/login', '/healthcheck'])
 
@@ -118,7 +120,7 @@ class Channel(TsRec):
 
 @dataclass(kw_only=True)
 class ChannelForMember:
-    channel_name: str; channel: Channel; channel_member: 'ChannelMember'; has_unread_messages: bool
+    channel_name: str; channel: Channel; channel_member: 'ChannelMember'; has_unread_messages: bool; is_selected: bool = False
 
     @staticmethod
     def from_channel_member(channel_member: 'ChannelMember') -> 'ChannelForMember':
@@ -214,8 +216,7 @@ class ChannelMessageWCtx:
         else: q = f"""{q} AND created_at > {ts} ORDER BY created_at ASC LIMIT {settings.message_history_page_size}"""
         
         rs = list(map(lambda args: ChannelMessageWCtx(*args), db.execute(q)))
-        # rs = rs[::-1] if not cursor or direction == "prev" else rs
-        
+    
         if len(rs) == 0: return [], prev_cursor, next_cursor
 
         if cursor:
@@ -234,7 +235,6 @@ class ChannelMessageWCtx:
             prev_cursor = ChannelMessageWCtx.encode_cursor(rs[-1].created_at, "prev") if len(rs) == settings.message_history_page_size else None 
 
         return rs, prev_cursor, next_cursor
-
 
     
     @staticmethod
@@ -264,11 +264,13 @@ class ChannelPlaceholder: member: Member
 
 @dataclass
 class ListOfChannelsForMember:
-    member: Member
+    member: Member; current_channel: Channel
 
     @property
     def group_channels(self) -> List[ChannelForMember]:
-        return list(map(lambda ch: ChannelForMember.from_channel_member(ch), channel_members(where=f"member={self.member.id} and channel in (select id from channel where is_direct=0)")))
+        r = list(map(lambda ch: ChannelForMember.from_channel_member(ch), channel_members(where=f"member={self.member.id} and channel in (select id from channel where is_direct=0)")))
+        for c in r: c.is_selected = c.channel.id == self.current_channel.id
+        return r
 
     @property
     def direct_channels(self) -> List[ChannelForMember]:
@@ -277,7 +279,10 @@ class ListOfChannelsForMember:
         # but refer to the channel by the other member name
         dcs = list(map(lambda c: c.id, channels(where=f"is_direct=1 and id in (select channel from channel_member where member={self.member.id})")))
         dcs = ",".join(map(str, dcs))
-        return list(map(lambda ch: ChannelForMember.from_channel_member(ch), channel_members(where=f"""member == {self.member.id} and channel in ({dcs})""")))
+        r = list(map(lambda ch: ChannelForMember.from_channel_member(ch), channel_members(where=f"""member == {self.member.id} and channel in ({dcs})""")))
+        for c in r: c.is_selected = c.channel.id == self.current_channel.id
+        return r
+
 
     @property
     def direct_channel_placeholders(self) -> List[ChannelPlaceholder]:
@@ -358,12 +363,18 @@ def __ft__(self: User): return Div('👤', self.name)
 
 @patch
 def __ft__(self: ChannelForMember):
-    return A(hx_target="#main", hx_get=f"/c/{self.channel.id}", hx_push_url="true", cls=self.has_unread_messages and "has-unread-messages", **{ "data-testid": f"nav-to-channel-{self.channel.id}" })(
-        Div(f'📢 {self.channel_name}') if not self.has_unread_messages else Strong(f'📢 {self.channel_name}')
+    cls=clsx(btn_base_cls, not self.is_selected and btn_variants["ghost"], self.is_selected and btn_variants["default"], self.has_unread_messages and "has-unread-messages")
+    icon = "👤" if self.channel.is_direct else "💬"
+    return A(hx_target="#main", hx_get=f"/c/{self.channel.id}", hx_push_url="true", cls=cls, **{ "data-testid": f"nav-to-channel-{self.channel.id}" })(
+        Div(f'{icon} {self.channel_name}') if not self.has_unread_messages else Strong(f'{icon} {self.channel_name}')
     )
 
 @patch
-def __ft__(self: ChannelMessage): return Div('👤', Strong(self.name))
+def __ft__(self: ChannelPlaceholder):
+    return A(hx_target="#main", hx_get=f"/direct/{self.member.id}", hx_push_url="true", **{ "data-testid": f"dm-{self.member.id}"}, cls=clsx("w-full justify-start", btn_base_cls, btn_variants["ghost"], btn_sizes['default']))(
+        Img(src=self.member.image_url, cls='w-10 h-10 rounded mr-3'),
+        self.member.name
+    )
 
 @patch
 def __ft__(self: ChannelMessageWCtx):
@@ -379,12 +390,8 @@ def __ft__(self: ChannelMessageWCtx):
     )
 
 @patch
-def __ft__(self: ChannelPlaceholder):
-    return A(hx_target="#main", hx_get=f"/direct/{self.member.id}", hx_push_url="true", **{ "data-testid": f"dm-{self.member.id}" })(self.member.name)
-
-@patch
 def __ft__(self: ListOfChannelsForMember):
-    return Aside(id="channels", hx_swap_oob="true")(
+    return Nav(id="channels", cls="grid gap-1 px-2", hx_swap_oob="true")(
         Ul(*[Li(gc) for gc in self.group_channels]),
         Separator(),
         Ul(*[Li(dc) for dc in self.direct_channels]), 
@@ -394,13 +401,13 @@ def __ft__(self: ListOfChannelsForMember):
 
 ## end of UI
 
-def Layout(content: FT, m: Member, w: Workspace) -> FT:
+def Layout(content: FT, m: Member, w: Workspace, channel: Channel) -> FT:
     print(f"MEMBER: {m} WORKSPACE: {w}")
     return Body(data_uid=m.user_id,data_wid=1,data_mid=m.id, cls="font-sans antialiased h-screen flex bg-background", hx_ext='ws', ws_connect=f'/ws?mid={m.id}')(
         Div(cls="bg-background flex-none w-64 pb-6 hidden md:block")(
             w,
             Separator(),
-            ListOfChannelsForMember(member=m),
+            Div(cls="group flex flex-col gap-4 py-2")(ListOfChannelsForMember(member=m, current_channel=channel)),
             Separator(),
             Div(cls='flex items-center px-4')(
                 Img(src=m.image_url, cls='w-10 h-10 mr-3'),
@@ -477,7 +484,6 @@ async def dispatch_incoming_message(m: ChannelMessage):
             await connections[c_s.sid](Div(id=f"channel-{m.channel}", hx_swap="scroll:bottom", hx_swap_oob="afterbegin", **{
                 "hx-on::after-settle ": f"""console.log('all settled')"""
             })(m_with_ctx))
-            await connections[c_s.sid](ListOfChannelsForMember(member=members[member.member]))
 
 @rt('/messages/send', methods=['POST'])
 def send_msg(msg:str, cid:int, req: Request):
@@ -538,7 +544,7 @@ def channel(req: Request, cid: int):
             ),
         )
     )
-    return convo if req.headers.get('Hx-Request') else Layout(convo, m, w)
+    return convo if req.headers.get('Hx-Request') else Layout(convo, m, w, channel)
 
 @rt('/direct/{to_m}')
 def direct(req: Request, to_m: int):
@@ -572,12 +578,9 @@ def on_disconn(ws):
     except NotFoundError: pass
     connections.pop(sid, None)
 
-async def process_ping(cmd: PingCommand, member: Member):
-    print(f">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> got ping {cmd}")
-    # mark all messages as read in cid channel
+async def process_ping(cmd: PingCommand, member: Member, current_channel: Channel):
     ChannelForMember.from_channel_member(channel_members(where=f"channel={cmd.cid} and member={member.id}")[0]).mark_all_as_read()
-    print(f">>>>>>> member: {member} dms: {ListOfChannelsForMember(member=member).direct_channels}")
-    await ws_send_to_member(member.id, ListOfChannelsForMember(member=member))
+    await ws_send_to_member(member.id, ListOfChannelsForMember(member=member, current_channel=current_channel))
 
 @app.ws('/ws', conn=on_conn, disconn=on_disconn)
 async def ws(command:str, auth:dict, d: dict, ws, sess):
@@ -588,7 +591,7 @@ async def ws(command:str, auth:dict, d: dict, ws, sess):
           Headers: {ws.headers}
           Session: {sess}""")
 
-    mid = int(auth['mid'])
+    mid, channel = int(auth['mid']), channels[int(d['cid'])]
     logger.debug(f"socket ID is {str(id(ws))}")
     
     try:
@@ -601,7 +604,7 @@ async def ws(command:str, auth:dict, d: dict, ws, sess):
     logger.debug(f"got command {command} with payload {json.dumps(d)}")
     
     cmd = Command.from_json(command, json.dumps(d))
-    await { "ping": process_ping }[cmd.cmd](cmd, members[mid])
+    await { "ping": process_ping }[cmd.cmd](cmd, members[mid], channel)
 
 serve()
 
@@ -724,14 +727,14 @@ try:
         ChannelForMember.from_channel_member(dc_members[1]).mark_all_as_read()
 
         # double check list of channels for member
-        c4m = ListOfChannelsForMember(member=m3)
+        c4m = ListOfChannelsForMember(member=m3, current_channel=channels()[0])
 
         assert len(c4m.direct_channels) == 1
         assert c4m.direct_channels[0].channel_member.member == m3.id
         assert c4m.direct_channels[0].has_unread_messages is False
 
         # check channels for philip
-        c4m = ListOfChannelsForMember(member=m1)
+        c4m = ListOfChannelsForMember(member=m1, current_channel=channels()[0])
 
         assert len(c4m.direct_channels) == 1
         assert c4m.direct_channels[0].channel_member.member == m1.id
@@ -747,14 +750,14 @@ try:
 
         # double check list of channels for member
 
-        c4m = ListOfChannelsForMember(member=m3)
+        c4m = ListOfChannelsForMember(member=m3, current_channel=channels()[0])
 
         assert len(c4m.direct_channels) == 1
         assert c4m.direct_channels[0].channel_member.member == m3.id
         assert c4m.direct_channels[0].channel_name == "Philip"
         assert c4m.direct_channels[0].has_unread_messages is True
         
-        c4m = ListOfChannelsForMember(member=m1)
+        c4m = ListOfChannelsForMember(member=m1, current_channel=channels()[0])
 
         assert len(c4m.direct_channels) == 1
         assert c4m.direct_channels[0].channel_member.member == m1.id
@@ -807,7 +810,7 @@ try:
         u1 = users(where="email='philip@thebakery.io'")[0]
         m1 = members(where=f"user_id={u1.id}")[0]
 
-        c4m = ListOfChannelsForMember(member=m1)
+        c4m = ListOfChannelsForMember(member=m1, current_channel=channels()[0])
 
         assert len(c4m.group_channels) == 2
         assert len(c4m.direct_channels) == 0
@@ -822,7 +825,7 @@ try:
         u2 = users(where="email='bob@thebakery.io'")[0]
         m2 = members(where=f"user_id={u2.id}")[0]
 
-        c4m = ListOfChannelsForMember(member=m2)
+        c4m = ListOfChannelsForMember(member=m2, current_channel=channels()[0])
 
         assert len(c4m.group_channels) == 2
         assert len(c4m.direct_channels) == 0
@@ -834,7 +837,7 @@ try:
 
         client.get(f'/direct/{m1.id}')
 
-        c4m = ListOfChannelsForMember(member=m2)
+        c4m = ListOfChannelsForMember(member=m2, current_channel=channels()[0])
 
         assert len(c4m.group_channels) == 2
         assert len(c4m.direct_channels) == 1
@@ -849,7 +852,7 @@ try:
         u3 = users(where="email='steve@thebakery.io'")[0]
         m3 = members(where=f"user_id={u3.id}")[0]
 
-        c4m = ListOfChannelsForMember(member=m3)
+        c4m = ListOfChannelsForMember(member=m3, current_channel=channels()[0])
 
         assert len(c4m.group_channels) == 2
         assert len(c4m.direct_channels) == 0
@@ -862,7 +865,7 @@ try:
 
         client.get(f'/direct/{m2.id}')
 
-        c4m = ListOfChannelsForMember(member=m3)
+        c4m = ListOfChannelsForMember(member=m3, current_channel=channels()[0])
 
         assert len(c4m.group_channels) == 2
         assert len(c4m.direct_channels) == 1
@@ -1023,8 +1026,8 @@ try:
 
         # check on new message indicator
         # everything in random channel should be marked as "read"
-        expect(bob_page.get_by_test_id("nav-to-channel-2")).not_to_have_class("has-unread-messages")
-        expect(steven_page.get_by_test_id("nav-to-channel-2")).not_to_have_class("has-unread-messages")
+        expect(bob_page.get_by_test_id("nav-to-channel-2")).not_to_have_class(re.compile("has-unread-messages"))
+        expect(steven_page.get_by_test_id("nav-to-channel-2")).not_to_have_class(re.compile("has-unread-messages"))
 
         # steven navigate to #general
         # bob sends a message on #random in the meantime
@@ -1037,7 +1040,7 @@ try:
 
         # steven should see a new message notification for random channel
 
-        expect(steven_page.get_by_test_id("nav-to-channel-2")).to_have_class("has-unread-messages")
+        expect(steven_page.get_by_test_id("nav-to-channel-2")).to_have_class(re.compile("has-unread-messages"))
 
         # steven navigates back to #random, sees the new message, and the notification is gone
         steven_page.goto(f"{base_url}/c/2")
@@ -1047,7 +1050,7 @@ try:
         assert steven_page.locator(".chat-message").count() == 3
         expect(steven_page.locator(".chat-message").locator("nth=0")).to_contain_text("sending another message to random")
 
-        expect(steven_page.get_by_test_id("nav-to-channel-2")).not_to_have_class("has-unread-messages")
+        expect(steven_page.get_by_test_id("nav-to-channel-2")).not_to_have_class(re.compile("has-unread-messages"))
 
         # bob is going to DM steven now
         bob_page.get_by_test_id("dm-3").click()
@@ -1062,7 +1065,7 @@ try:
         # steven should see new message notification
 
         expect(steven_page.get_by_test_id("nav-to-channel-3")).to_contain_text("Bob")
-        expect(steven_page.get_by_test_id("nav-to-channel-3")).to_have_class("has-unread-messages")
+        expect(steven_page.get_by_test_id("nav-to-channel-3")).to_have_class(re.compile("has-unread-messages"))
 
         # steven navigates to the DM channel
 
@@ -1073,7 +1076,7 @@ try:
         assert steven_page.locator(".chat-message").count() == 1
         assert steven_page.locator(".chat-message").locator("p").inner_html() == "hello steven"
 
-        expect(steven_page.get_by_test_id("nav-to-channel-3")).not_to_have_class("has-unread-messages")
+        expect(steven_page.get_by_test_id("nav-to-channel-3")).not_to_have_class(re.compile("has-unread-messages"))
 
         # steven responds to bob
 
