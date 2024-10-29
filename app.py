@@ -69,9 +69,8 @@ bware = Beforeware(check_auth, skip=[r'/favicon\.ico', r'/static/.*', r'.*\.css'
 
 app = FastHTMLWithLiveReload(debug=True, hdrs=[
     ShadHead(tw_cdn=True),
-    Script(src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js", defer=True),
     Style("""  
-        #messages-loading.htmx-request {
+        .messages-loading.htmx-request {
           padding: 10px;
           background-image: url('https://htmx.org/img/bars.svg');
           background-repeat: no-repeat;
@@ -494,28 +493,13 @@ def send_msg(msg:str, cid:int, req: Request):
 
 @rt('/c/messages/{cid}')
 def list_channel_messages(req: Request, cid: int):
-    msgs, prev_cursor, next_cursor = ChannelMessageWCtx.fetch(cid, req.query_params.get("c"))
-    return Div(**{"data-prev": prev_cursor, "data-next": next_cursor, "x-init": f"""
-        function(cursor){{
-            const el = document.getElementById("channel-{cid}");
-            let loadingIndicator = document.getElementById("messages-loading");
-            if (loadingIndicator) loadingIndicator.remove();
-
-            loadingIndicator = document.createElement("div");
-            loadingIndicator.id = "messages-loading";
-            loadingIndicator.classList.add("htmx-indicator");
-            loadingIndicator.setAttribute("hx-get", "/c/messages/{cid}?c=" + cursor);
-            loadingIndicator.setAttribute("hx-indicator", "#messages-loading");
-            loadingIndicator.setAttribute("hx-trigger", "intersect once");
-            loadingIndicator.setAttribute("hx-target", "#channel-{cid}");
-            loadingIndicator.setAttribute("hx-swap", "beforeend show:#chat-message-{msgs[-1].id}:top");
-            el.append(loadingIndicator);
-
-            htmx.process(el);
-        }}("{prev_cursor}")
-        """ }) if len(msgs) == settings.message_history_page_size else None, *msgs
-    # ⬆️ only include scroller if it looks like we have more messages to load 
-
+    msgs, prev_cursor, _ = ChannelMessageWCtx.fetch(cid, req.query_params.get("c"))
+    load_previous = Div(
+        cls="messages-loading htmx-indicator", hx_get=f"/c/messages/{cid}?c={prev_cursor}", hx_indicator=".messages-loading",
+        hx_trigger="intersect once", hx_target=f"#channel-{cid}", hx_swap=f"beforeend show:#chat-message-{msgs[-1].id}:top"
+    ) if len(msgs) == settings.message_history_page_size else None
+    # ⬆️ only include scroller if it looks like we have more messages to load
+    return *msgs, load_previous
 
 @rt('/c/{cid}')
 def channel(req: Request, cid: int):
