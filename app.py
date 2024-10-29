@@ -506,7 +506,7 @@ def list_channel_messages(req: Request, cid: int):
 
             htmx.process(el);
         }}("{prev_cursor}")
-        """ }) if len(msgs) != 0 else None, *msgs
+        """ }) if len(msgs) == settings.message_history_page_size else None, *msgs
     # ⬆️ only include scroller if it looks like we have more messages to load 
 
 
@@ -951,9 +951,7 @@ try:
 
         # switch to "random" channel
         page.get_by_test_id("nav-to-channel-2").click()
-        page.wait_for_load_state()
-
-        assert page.url.endswith("/c/2")
+        page.wait_for_url("**/c/2")
 
         # send a message
 
@@ -1042,10 +1040,11 @@ try:
 
         # steven navigates back to #random, sees the new message, and the notification is gone
         steven_page.goto(f"{base_url}/c/2")
+        steven_page.wait_for_url("**/c/2")
 
-        steven_page.wait_for_selector(".chat-message:nth-child(2)")
+        steven_page.wait_for_selector(".chat-message")
         assert steven_page.locator(".chat-message").count() == 3
-        assert steven_page.locator(".chat-message:nth-child(2)").locator("p").inner_html() == "sending another message to random"
+        expect(steven_page.locator(".chat-message").locator("nth=0")).to_contain_text("sending another message to random")
 
         expect(steven_page.get_by_test_id("nav-to-channel-2")).not_to_have_class("has-unread-messages")
 
