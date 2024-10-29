@@ -30,7 +30,7 @@ jobs:
       - name: Make sure browsers are installed for Playwright
         run: poetry run playwright install --with-deps
       - name: Run tests
-        run: TEST_MODE=yes poetry run pytest app.py --base-url http://localhost:5001
+        run: TEST_MODE=yes poetry run pytest app.py --base-url http://localhost:5002
         continue-on-error: false
       - name: Freeze dependencies
         run: poetry export --without-hashes -f requirements.txt --output requirements.txt
