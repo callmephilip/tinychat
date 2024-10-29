@@ -1,4 +1,4 @@
-import logging, json, time, dataclasses, typing, hashlib, urllib, base64
+import logging, json, time, dataclasses, typing, hashlib, urllib, base64, random, threading, uvicorn, contextlib
 from lorem_text import lorem
 from fasthtml.common import *
 from shad4fast import *
@@ -88,6 +88,7 @@ connections: Dict[str, typing.Awaitable] = {}
 @dataclass
 class Settings:
     workspace_name: str = "The Bakery"
+    host_url: str = "http://localhost:5001"
     default_channels: List[str] = dataclasses.field(default_factory=lambda: ["general", "random"])
     message_history_page_size = 40
 
@@ -286,6 +287,8 @@ class ListOfChannelsForMember:
         """)))
 
 def setup_database(test=False):
+    if test: print(">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> TEST MODE yo! <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<")
+
     global db
     global users, workspaces, channels, members, channel_members, channel_messages, channel_message_seen_indicators, sockets
 
@@ -311,11 +314,7 @@ def setup_database(test=False):
             join user on member.user_id=user.id
             join channel on channel_message.channel=channel.id                            
         """)
-
-    if workspaces.count == 0: workspaces.insert(Workspace(name=settings.workspace_name))
-    if channels.count == 0:
-        for name in settings.default_channels: channels.insert(Channel(name=name, workspace_id=1))
-
+    
     # setup triggers 
     db.conn.execute(f"""CREATE TRIGGER IF NOT EXISTS update_last_seen_message_ts AFTER INSERT ON channel_message
         BEGIN
@@ -323,9 +322,21 @@ def setup_database(test=False):
                 ON CONFLICT(channel_id, member_id) DO UPDATE SET last_seen_ts=new.created_at;
         END""")
 
-    if not test: connect_tractor(app, db.conn)
+    if workspaces.count == 0: workspaces.insert(Workspace(name=settings.workspace_name))
+    if channels.count == 0: [channels.insert(Channel(name=name, workspace_id=1)) for name in settings.default_channels]
 
-setup_database()
+    # add test data if in test mode
+    if test:
+        u = users.insert(User(name="Phil", email="phil@tc.com"))
+        member = members.insert(Member(user_id=u.id, workspace_id=workspaces()[0].id))
+        for channel in channels(): channel_members.insert(ChannelMember(channel=channel.id, member=member.id))
+        ts, target_channel = get_ts(), channels()[0]
+        for i in range(1200): channel_messages.insert(ChannelMessage(created_at=ts + i, channel=target_channel.id, sender=member.id, message=f"{i+1} {lorem.sentence()}"))
+
+    if not test: connect_tractor(app, db.conn)
+    
+
+setup_database(os.environ.get("TEST_MODE", False))
 
 async def ws_send_to_member(member_id: int, data):
     s = sockets(where=f"mid={member_id}")[0]
@@ -446,12 +457,6 @@ def post(login:Login, sess):
         channel_members.insert(ChannelMember(channel=channel.id, member=member.id))
     sess['mid'], sess['wid'] = member.id, workspace.id
 
-    # TODO: remove this
-    # add a bunch of messages to scroll through
-    if channel_messages.count < 500:
-        ts, target_channel = get_ts(), channels()[0]
-        for i in range(1200): channel_messages.insert(ChannelMessage(created_at=ts + i, channel=target_channel.id, sender=member.id, message=f"{i+1} {lorem.sentence()}"))
-
     return RedirectResponse('/', status_code=303)
 
 
@@ -487,7 +492,7 @@ def send_msg(msg:str, cid:int, req: Request):
     return new_message, BackgroundTask(dispatch_incoming_message, m=cm)
 
 @rt('/c/messages/{cid}')
-def channel_message(req: Request, cid: int):
+def list_channel_messages(req: Request, cid: int):
     msgs, prev_cursor, next_cursor = ChannelMessageWCtx.fetch(cid, req.query_params.get("c"))
     return Div(**{"data-prev": prev_cursor, "data-next": next_cursor, "x-init": f"""
         function(cursor){{
@@ -614,6 +619,25 @@ try:
     def client():
         yield Client(app)
 
+    @pytest.fixture(scope="session", autouse=True)
+    def create_test_application_server():
+        # source: https://stackoverflow.com/a/64521239/320419
+        class TestServer(uvicorn.Server):
+            def install_signal_handlers(self): pass
+
+            @contextlib.contextmanager
+            def run_in_thread(self):
+                t = threading.Thread(target=self.run)
+                t.start()
+                try:
+                    while not self.started: time.sleep(1e-3)
+                    yield
+                finally:
+                    self.should_exit = True
+                    t.join()
+
+        with TestServer(config=uvicorn.Config("app:app", host="0.0.0.0", port=5001, log_level="info")).run_in_thread(): yield
+
     def test_commands():
         cmd = Command.from_json("ping", '{"cid": 1}')
         assert isinstance(cmd, PingCommand)
@@ -625,11 +649,11 @@ try:
         assert response.json() == {"status": "ok"}
 
     def test_auth(client):
-        assert len(users()) == 0
+        assert len(users()) == 1
         assert len(workspaces()) == 1
         assert len(channels()) == 2
-        assert len(members()) == 0
-        assert len(channel_members()) == 0
+        assert len(members()) == 1
+        assert len(channel_members()) == 2
 
         response: Response = client.get('/')
 
@@ -638,20 +662,21 @@ try:
 
         response = client.post('/login', data={"name": "Philip", "email": "philip@thebakery.io"})
         
-        assert len(users()) == 1
-        assert len(members()) == 1
-        assert len(channel_members()) == 2
+        assert len(users()) == 2
+        assert len(members()) == 2
+        assert len(channel_members()) == 4
 
         assert response.status_code == 303
         assert response.headers['location'] == '/'
 
     def test_message_seen(client):
-        u1, u2, workspace, channel = users.insert(User(name="Philip", email="p@g.com")), users.insert(User(name="John", email="j@g.com")), workspaces()[0], channels()[0]
+        u1, u2, workspace = users.insert(User(name="Philip", email="p@g.com")), users.insert(User(name="John", email="j@g.com")), workspaces()[0]
+        channel = channels.insert(Channel(name=f"{random.randint(1, 1000)}", workspace_id=workspace.id))
         m1, m2 = members.insert(Member(user_id=u1.id, workspace_id=workspace.id)), members.insert(Member(user_id=u2.id, workspace_id=workspace.id))
         cm1, cm2 = channel_members.insert(ChannelMember(channel=channel.id, member=m1.id)), channel_members.insert(ChannelMember(channel=channel.id, member=m2.id))
 
         # no messages in the channel
-        assert channel.last_message_ts is None 
+        assert channel.last_message_ts is None
 
         # user 1 sends message to the channel
         msg = channel_messages.insert(ChannelMessage(channel=channel.id, sender=m1.id, message="hello"))
@@ -772,7 +797,7 @@ try:
         assert len(channels(where="is_direct=1")) == 1
 
     def test_list_of_channels_for_member(client):
-        assert len(users()) == 0
+        assert len(users()) == 1
         assert len(workspaces()) == 1
         assert len(channels()) == 2
 
@@ -787,7 +812,7 @@ try:
 
         assert len(c4m.group_channels) == 2
         assert len(c4m.direct_channels) == 0
-        assert len(c4m.direct_channel_placeholders) == 0
+        assert len(c4m.direct_channel_placeholders) == 1
         assert c4m.group_channels[0].channel_name == "general"
         assert c4m.group_channels[1].channel_name == "random"
 
@@ -802,9 +827,9 @@ try:
 
         assert len(c4m.group_channels) == 2
         assert len(c4m.direct_channels) == 0
-        assert len(c4m.direct_channel_placeholders) == 1
+        assert len(c4m.direct_channel_placeholders) == 2
 
-        assert c4m.direct_channel_placeholders[0].member.name == "Philip"
+        assert c4m.direct_channel_placeholders[0].member.name == "Phil"
 
         # bob wants to message philip
 
@@ -814,7 +839,7 @@ try:
 
         assert len(c4m.group_channels) == 2
         assert len(c4m.direct_channels) == 1
-        assert len(c4m.direct_channel_placeholders) == 0
+        assert len(c4m.direct_channel_placeholders) == 1
 
         assert c4m.direct_channels[0].channel_name == "Philip"
 
@@ -829,10 +854,10 @@ try:
 
         assert len(c4m.group_channels) == 2
         assert len(c4m.direct_channels) == 0
-        assert len(c4m.direct_channel_placeholders) == 2
+        assert len(c4m.direct_channel_placeholders) == 3
 
-        assert c4m.direct_channel_placeholders[0].member.name == "Philip"
-        assert c4m.direct_channel_placeholders[1].member.name == "Bob"
+        assert c4m.direct_channel_placeholders[0].member.name == "Phil"
+        assert c4m.direct_channel_placeholders[1].member.name == "Philip"
 
         # steven wants to message bob
 
@@ -842,10 +867,10 @@ try:
 
         assert len(c4m.group_channels) == 2
         assert len(c4m.direct_channels) == 1
-        assert len(c4m.direct_channel_placeholders) == 1
+        assert len(c4m.direct_channel_placeholders) == 2
 
         assert c4m.direct_channels[0].channel_name == "Bob"
-        assert c4m.direct_channel_placeholders[0].member.name == "Philip"
+        assert c4m.direct_channel_placeholders[0].member.name == "Phil"
 
     def test_channel_message_pagination():
         # mess with cursor encoding/decoding
@@ -858,23 +883,20 @@ try:
         m  = members.insert(Member(user_id=u.id, workspace_id=workspace.id))
         channel_members.insert(ChannelMember(channel=channel.id, member=m.id))
 
-        # insert a bunch of messages
-        for i in range(1000): channel_messages.insert(ChannelMessage(created_at=t+i, channel=channel.id, sender=m.id, message=f"hello {i + 1}"))
-
-        assert len(channel_messages()) == 1000
+        assert len(channel_messages()) == 1200
 
         msg_batch, prev_cursor, next_cursor = ChannelMessageWCtx.fetch(channel.id)
 
         assert len(msg_batch) == settings.message_history_page_size
-        assert msg_batch[0].message == "hello 1000"
-        assert msg_batch[-1].message == "hello 961"
+        assert msg_batch[0].message.startswith("1200")
+        assert msg_batch[-1].message.startswith("1161")
         assert next_cursor is None
         assert prev_cursor is not None
 
         msg_batch, prev_cursor, next_cursor = ChannelMessageWCtx.fetch(channel.id, prev_cursor)
 
         assert len(msg_batch) == settings.message_history_page_size
-        assert msg_batch[0].message == "hello 960"
+        assert msg_batch[0].message.startswith("1160")
         assert next_cursor is not None
         assert prev_cursor is not None
 
@@ -904,9 +926,30 @@ try:
         # assert len(msg_batch) == settings.message_history_page_size
         # assert msg_batch[0].message == "hello 1"
 
+    def test_happy_flow(page: Page):
+        page.goto("/")
 
-    def test_login_flow(page: Page):
-        page.goto("http://localhost:5001")
-        assert page.url == "http://localhost:5001/login"
+        assert page.url.endswith("/login")
+
+        page.get_by_placeholder("Name").fill(f"{random.randint(0, 1000000)}")
+        page.get_by_placeholder("Email").fill(f"{random.randint(0, 1000000)}@tc.com")
+        page.get_by_role("button", name="login").click()
+
+        # make sure we end up on the main channel page
+        assert page.url.endswith("/c/1")
+
+        page.wait_for_selector(".chat-message")
+
+        assert page.locator(".chat-message").count() == settings.message_history_page_size
+        assert page.locator(".chat-message").locator("nth=-1").locator("p").inner_html().startswith("1161")
+
+        # scroll to the first message in the list
+        page.locator(".chat-message").locator("nth=-1").scroll_into_view_if_needed()
+
+        # expect more messages to load
+        page.wait_for_selector(f".chat-message:nth-child({2 * settings.message_history_page_size})")
+        assert page.locator(".chat-message").count() == 2 * settings.message_history_page_size
+        assert page.locator(".chat-message").locator(f"nth={2 * settings.message_history_page_size - 1}").locator("p").inner_html().startswith("1121")
+
 
 except: pass

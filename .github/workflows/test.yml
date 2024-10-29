@@ -27,9 +27,6 @@ jobs:
       - name: Make sure browsers are installed for Playwright
         run: poetry run playwright install --with-deps
 
-      - name: Start local server for testing
-        run: poetry run python app.py &
-
       - name: Run tests
-        run: poetry run pytest app.py
+        run: TEST_MODE=yes poetry run pytest app.py --base-url http://localhost:5001
         continue-on-error: false
