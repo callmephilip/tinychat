@@ -6,7 +6,7 @@ from tractor import connect_tractor
 
 try:
     import pytest
-    from playwright.sync_api import Page, sync_playwright
+    from playwright.sync_api import Page, Playwright
 except ImportError: pass
 
 # +-------------------------------+-------------------------------+
@@ -408,16 +408,6 @@ def Layout(content: FT, m: Member, w: Workspace) -> FT:
             )
         ),
         Div(id="main", cls="flex-1 flex flex-col bg-white overflow-hidden")(content),
-        HtmxOn('wsConfigSend', """
-            if (event.detail.parameters.command !== "ping") { throw new Error(`Invalid command: ${event.detail.parameters.command}`) }
-            
-            event.detail.parameters = {
-               command: event.detail.parameters.command,
-               d: { cid: event.detail.parameters.cid },
-               auth: { mid: document.querySelector("body").getAttribute("data-mid") }
-            };
-        """
-        ),
         HtmxOn('oobAfterSwap', """
             if (event.detail.target.id.match(/channel-[0-9]+/ig)) {
                console.log(">>>>> current scroll top is", event.detail.target.scrollTop);
@@ -512,7 +502,7 @@ def list_channel_messages(req: Request, cid: int):
 
             htmx.process(el);
         }}("{prev_cursor}")
-        """ }), *msgs
+        """ }) if len(msgs) != 0 else None, *msgs
     # ⬆️ only include scroller if it looks like we have more messages to load 
 
 
@@ -520,8 +510,9 @@ def list_channel_messages(req: Request, cid: int):
 def channel(req: Request, cid: int):
     m, w, frm_id, msgs_id, channel = req.scope['m'], req.scope['w'], f"f-{cid}", f"channel-{cid}", channels[cid]
     channel_name = channel.name if not channel.is_direct else channel_members(where=f"channel={cid} and member!={m.id}")[0].name
-    
-    convo = Div(cls='border-b flex px-6 py-2 items-center flex-none', hx_trigger="load, every 5s", hx_vals=f'{{"command": "ping", "cid": {cid} }}', **{"ws_send": "true"})(
+    ping_cmd = { "command": "ping", "d": { "cid": cid }, "auth": { "mid": m.id } }
+
+    convo = Div(cls='border-b flex px-6 py-2 items-center flex-none', hx_trigger="load, every 5s", hx_vals=f'{json.dumps(ping_cmd)}', **{"ws_send": "true"})(
         Div(cls='flex flex-col')(
             H3(cls='text-grey-darkest mb-1 font-extrabold')(f"#{channel_name}"),
             Div("Chit-chattin' about ugly HTML and mixing of concerns.", cls='text-grey-dark text-sm truncate')
@@ -584,10 +575,13 @@ async def process_ping(cmd: PingCommand, member: Member):
     await ws_send_to_member(member.id, ListOfChannelsForMember(member=member))
 
 @app.ws('/ws', conn=on_conn, disconn=on_disconn)
-async def ws(command:str, auth:dict, d: dict, ws):
-    print(f">>>>>>>>>>>>>> got message in socket {command}")
-    print(f">>>>>>>>>>>>>> got message in socket {auth}")
-    print(f">>>>>>>>>>>>>> got message in socket {d}")
+async def ws(command:str, auth:dict, d: dict, ws, sess):
+    print(f""" 
+          Received socket message: {command}
+          Auth is: {auth}
+          Payload is: {d}
+          Headers: {ws.headers}
+          Session: {sess}""")
 
     mid = int(auth['mid'])
     logger.debug(f"socket ID is {str(id(ws))}")
@@ -619,7 +613,7 @@ try:
     def client():
         yield Client(app)
 
-    @pytest.fixture(scope="session", autouse=True)
+    @pytest.fixture(scope="function", autouse=True)
     def create_test_application_server():
         # source: https://stackoverflow.com/a/64521239/320419
         class TestServer(uvicorn.Server):
@@ -967,7 +961,8 @@ try:
 
         page.locator(".chat-message").locator("p").inner_html().startswith("hello world")
 
-    def test_messaging_interaction(playwright):
+    def test_messaging_interaction(playwright: Playwright, page: Page):
+        base_url = "http://localhost:5002"
         browser = playwright.chromium.launch()
         
         steven_session = browser.new_context()
@@ -976,21 +971,52 @@ try:
         steven_page = steven_session.new_page()
         bob_page = bob_session.new_page()
 
-        steven_page.goto("http://localhost:5002")
+        steven_page.goto(f"{base_url}")
         steven_page.get_by_placeholder("Name").fill("Steven")
         steven_page.get_by_placeholder("Email").fill("steven@tc.com")
         steven_page.get_by_role("button", name="login").click()
         
+        steven_page.wait_for_load_state()
+
         assert steven_page.url.endswith("/c/1")
 
-        bob_page.goto("http://localhost:5002")
+        bob_page.goto(base_url)
         bob_page.get_by_placeholder("Name").fill("Bob")
         bob_page.get_by_placeholder("Email").fill("bob@tc.com")
         bob_page.get_by_role("button", name="login").click()
         
-        assert bob_page.url.endswith("/c/1")
+        bob_page.wait_for_url("**/c/1") 
 
+        # both steven and bob head to #random channel
+        
+        bob_page.goto(f"{base_url}/c/2")
+        steven_page.goto(f"{base_url}/c/2")
 
+        # steven sends a message
+        steven_page.get_by_placeholder("Message #random").fill("hello world")
+        steven_page.get_by_placeholder("Message #random").press("Enter")
+        steven_page.wait_for_selector(".chat-message")
+        steven_page.locator(".chat-message").locator("p").inner_html().startswith("hello world")
+
+        # bob should see the message
+        bob_page.wait_for_selector(".chat-message")
+
+        assert bob_page.locator(".chat-message").count() == 1
+        assert bob_page.locator(".chat-message").locator("p").inner_html() == "hello world"
+
+        # bob responds
+
+        bob_page.get_by_placeholder("Message #random").fill("hey there")
+        bob_page.get_by_placeholder("Message #random").press("Enter")
+
+        bob_page.wait_for_selector(".chat-message:nth-child(1)")
+        assert bob_page.locator(".chat-message").count() == 2
+        assert bob_page.locator(".chat-message:nth-child(1)").locator("p").inner_html() == "hey there"
+
+        # steven should see the message
+        steven_page.wait_for_selector(f".chat-message:nth-child(1)")
+        assert steven_page.locator(".chat-message").count() == 2
+        assert steven_page.locator(".chat-message:nth-child(1)").locator("p").inner_html() == "hey there"
 
 
 except: pass
