@@ -39,7 +39,8 @@ except ImportError: pass
 # re https://www.creative-tim.com/twcomponents/component/slack-clone-1
 # re https://systemdesign.one/slack-architecture/
 
-
+# TODO: figure out if there is a way to simplify some of the queries using triggers and views instead
+# TODO: fix layout
 # TODO: figure out socket authentication
 # TODO: support markdown in messages?
 # TODO: people can log out
@@ -291,8 +292,6 @@ class ListOfChannelsForMember:
         """)))
 
 def setup_database(test=False):
-    if test: print(">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> TEST MODE yo! <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<")
-
     global db
     global users, workspaces, channels, members, channel_members, channel_messages, channel_message_seen_indicators, sockets
 
@@ -416,10 +415,12 @@ def Layout(content: FT, m: Member, w: Workspace) -> FT:
             if (event.detail.target.id.match(/channel-[0-9]+/ig)) {
                console.log(">>>>> current scroll top is", event.detail.target.scrollTop);
                console.log(">>>>> current scroll height is", event.detail.target.scrollHeight);
-               console.log(">>>>> ratio is", event.detail.target.scrollTop / event.detail.target.scrollHeight);
+               console.log(">>>>> ratio is", Math.abs(event.detail.target.scrollTop / event.detail.target.scrollHeight));
 
-               if (event.detail.target.scrollTop / event.detail.target.scrollHeight > 0.2) {
-                    // scroll to the bottom
+               var body = document.body, html = document.documentElement;
+               const height = Math.max(event.detail.target.clientHeight, event.detail.target.scrollHeight, event.detail.target.offsetHeight );
+
+               if (Math.abs(event.detail.target.scrollTop) / height < 0.2) {                    
                     event.detail.target.scrollTop = event.detail.target.scrollHeight;
                }
             }
@@ -529,10 +530,10 @@ def channel(req: Request, cid: int):
             Span(cls='text-3xl text-grey border-r-2 border-grey p-2')(
                 NotStr("""<svg class="fill-current h-6 w-6 block" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20"><path d="M16 10c0 .553-.048 1-.601 1H11v4.399c0 .552-.447.601-1 .601-.553 0-1-.049-1-.601V11H4.601C4.049 11 4 10.553 4 10c0-.553.049-1 .601-1H9V4.601C9 4.048 9.447 4 10 4c.553 0 1 .048 1 .601V9h4.399c.553 0 .601.447.601 1z"></path></svg>""")
             ),
-            Form(id=frm_id, hx_post="/messages/send", hx_target=f"#{msgs_id}", hx_swap="afterbegin",
+            Form(id=frm_id, cls="w-full", hx_post="/messages/send", hx_target=f"#{msgs_id}", hx_swap="afterbegin",
                  **{ "hx-on::after-request": f"""document.querySelector("#{frm_id}").reset(); document.getElementById("{msgs_id}").scrollTop = document.getElementById("{msgs_id}").scrollHeight;""" }
             )(
-                Input(id='msg', placeholder=f"Message {f'#{channel_name}' if not channel.is_direct else channel_name}"),
+                Input(id='msg', style="border:none; border-radius: 0;", placeholder=f"Message {f'#{channel_name}' if not channel.is_direct else channel_name}"),
                 Input(name='cid', type="hidden", value=cid)
             ),
         )
