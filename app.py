@@ -6,8 +6,11 @@ from tractor import connect_tractor
 
 try:
     import pytest
-    from playwright.sync_api import Page, Playwright
+    from playwright.sync_api import Page, Playwright, expect
 except ImportError: pass
+
+# The beginning of wisdom is the ability to call things by their right names - Confucius
+
 
 # +-------------------------------+-------------------------------+
 # | Channels                       | # general                     |
@@ -355,7 +358,7 @@ def __ft__(self: User): return Div('👤', self.name)
 
 @patch
 def __ft__(self: ChannelForMember):
-    return A(hx_target="#main", hx_get=f"/c/{self.channel.id}", hx_push_url="true", **{ "data-testid": f"nav-to-channel-{self.channel.id}" })(
+    return A(hx_target="#main", hx_get=f"/c/{self.channel.id}", hx_push_url="true", cls=self.has_unread_messages and "has-unread-messages", **{ "data-testid": f"nav-to-channel-{self.channel.id}" })(
         Div(f'📢 {self.channel_name}') if not self.has_unread_messages else Strong(f'📢 {self.channel_name}')
     )
 
@@ -377,7 +380,7 @@ def __ft__(self: ChannelMessageWCtx):
 
 @patch
 def __ft__(self: ChannelPlaceholder):
-    return A(hx_target="#main", hx_get=f"/direct/{self.member.id}", hx_push_url="true")(f"DM {self.member.name}")
+    return A(hx_target="#main", hx_get=f"/direct/{self.member.id}", hx_push_url="true", **{ "data-testid": f"dm-{self.member.id}" })(self.member.name)
 
 @patch
 def __ft__(self: ListOfChannelsForMember):
@@ -528,7 +531,7 @@ def channel(req: Request, cid: int):
             Form(id=frm_id, hx_post="/messages/send", hx_target=f"#{msgs_id}", hx_swap="afterbegin",
                  **{ "hx-on::after-request": f"""document.querySelector("#{frm_id}").reset(); document.getElementById("{msgs_id}").scrollTop = document.getElementById("{msgs_id}").scrollHeight;""" }
             )(
-                Input(id='msg', placeholder=f"Message #{channel_name}"),
+                Input(id='msg', placeholder=f"Message {f'#{channel_name}' if not channel.is_direct else channel_name}"),
                 Input(name='cid', type="hidden", value=cid)
             ),
         )
@@ -971,6 +974,13 @@ try:
         steven_page = steven_session.new_page()
         bob_page = bob_session.new_page()
 
+        bob_page.goto(base_url)
+        bob_page.get_by_placeholder("Name").fill("Bob")
+        bob_page.get_by_placeholder("Email").fill("bob@tc.com")
+        bob_page.get_by_role("button", name="login").click()
+        
+        bob_page.wait_for_url("**/c/1") 
+        
         steven_page.goto(f"{base_url}")
         steven_page.get_by_placeholder("Name").fill("Steven")
         steven_page.get_by_placeholder("Email").fill("steven@tc.com")
@@ -979,13 +989,6 @@ try:
         steven_page.wait_for_load_state()
 
         assert steven_page.url.endswith("/c/1")
-
-        bob_page.goto(base_url)
-        bob_page.get_by_placeholder("Name").fill("Bob")
-        bob_page.get_by_placeholder("Email").fill("bob@tc.com")
-        bob_page.get_by_role("button", name="login").click()
-        
-        bob_page.wait_for_url("**/c/1") 
 
         # both steven and bob head to #random channel
         
@@ -1017,6 +1020,72 @@ try:
         steven_page.wait_for_selector(f".chat-message:nth-child(1)")
         assert steven_page.locator(".chat-message").count() == 2
         assert steven_page.locator(".chat-message:nth-child(1)").locator("p").inner_html() == "hey there"
+
+        # check on new message indicator
+        # everything in random channel should be marked as "read"
+        expect(bob_page.get_by_test_id("nav-to-channel-2")).not_to_have_class("has-unread-messages")
+        expect(steven_page.get_by_test_id("nav-to-channel-2")).not_to_have_class("has-unread-messages")
+
+        # steven navigate to #general
+        # bob sends a message on #random in the meantime
+
+        steven_page.goto(f"{base_url}/c/1")
+        assert steven_page.url.endswith("/c/1")
+
+        bob_page.get_by_placeholder("Message #random").fill("sending another message to random")
+        bob_page.get_by_placeholder("Message #random").press("Enter")
+
+        # steven should see a new message notification for random channel
+
+        expect(steven_page.get_by_test_id("nav-to-channel-2")).to_have_class("has-unread-messages")
+
+        # steven navigates back to #random, sees the new message, and the notification is gone
+        steven_page.goto(f"{base_url}/c/2")
+
+        steven_page.wait_for_selector(".chat-message:nth-child(2)")
+        assert steven_page.locator(".chat-message").count() == 3
+        assert steven_page.locator(".chat-message:nth-child(2)").locator("p").inner_html() == "sending another message to random"
+
+        expect(steven_page.get_by_test_id("nav-to-channel-2")).not_to_have_class("has-unread-messages")
+
+        # bob is going to DM steven now
+        bob_page.get_by_test_id("dm-3").click()
+
+        expect(bob_page.get_by_placeholder("Message Steven")).to_be_visible()
+        expect(bob_page.get_by_test_id("dm-3")).to_have_count(0)
+
+        # message steven
+        bob_page.get_by_placeholder("Message Steven").fill("hello steven")
+        bob_page.get_by_placeholder("Message Steven").press("Enter")
+
+        # steven should see new message notification
+
+        expect(steven_page.get_by_test_id("nav-to-channel-3")).to_contain_text("Bob")
+        expect(steven_page.get_by_test_id("nav-to-channel-3")).to_have_class("has-unread-messages")
+
+        # steven navigates to the DM channel
+
+        steven_page.goto(f"{base_url}/c/3")
+        assert steven_page.url.endswith("/c/3")
+
+        steven_page.wait_for_selector(".chat-message")
+        assert steven_page.locator(".chat-message").count() == 1
+        assert steven_page.locator(".chat-message").locator("p").inner_html() == "hello steven"
+
+        expect(steven_page.get_by_test_id("nav-to-channel-3")).not_to_have_class("has-unread-messages")
+
+        # steven responds to bob
+
+        steven_page.get_by_placeholder("Message Bob").fill("hey bob")
+        steven_page.get_by_placeholder("Message Bob").press("Enter")
+
+        # back to Bob now
+
+        assert bob_page.url.endswith("/c/3")
+
+        bob_page.wait_for_selector(".chat-message:nth-child(1)")
+        assert bob_page.locator(".chat-message").count() == 2
+        assert bob_page.locator(".chat-message:nth-child(1)").locator("p").inner_html() == "hey bob"
 
 
 except: pass

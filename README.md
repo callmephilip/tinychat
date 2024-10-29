@@ -5,6 +5,12 @@
 
 Run tests
 
+If running tests for the first time, install drivers for playwright
+
+```
+poetry run playwright install
+```
+
 ```
 TEST_MODE=yes poetry run pytest app.py --base-url http://localhost:5002
 ```
