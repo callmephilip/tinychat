@@ -6,7 +6,7 @@ from tractor import connect_tractor
 
 try:
     import pytest
-    from playwright.sync_api import Page
+    from playwright.sync_api import Page, sync_playwright
 except ImportError: pass
 
 # +-------------------------------+-------------------------------+
@@ -355,7 +355,7 @@ def __ft__(self: User): return Div('👤', self.name)
 
 @patch
 def __ft__(self: ChannelForMember):
-    return A(hx_target="#main", hx_get=f"/c/{self.channel.id}", hx_push_url="true")(
+    return A(hx_target="#main", hx_get=f"/c/{self.channel.id}", hx_push_url="true", **{ "data-testid": f"nav-to-channel-{self.channel.id}" })(
         Div(f'📢 {self.channel_name}') if not self.has_unread_messages else Strong(f'📢 {self.channel_name}')
     )
 
@@ -537,7 +537,7 @@ def channel(req: Request, cid: int):
             Form(id=frm_id, hx_post="/messages/send", hx_target=f"#{msgs_id}", hx_swap="afterbegin",
                  **{ "hx-on::after-request": f"""document.querySelector("#{frm_id}").reset(); document.getElementById("{msgs_id}").scrollTop = document.getElementById("{msgs_id}").scrollHeight;""" }
             )(
-                Input(id='msg'),
+                Input(id='msg', placeholder=f"Message #{channel_name}"),
                 Input(name='cid', type="hidden", value=cid)
             ),
         )
@@ -636,7 +636,7 @@ try:
                     self.should_exit = True
                     t.join()
 
-        with TestServer(config=uvicorn.Config("app:app", host="0.0.0.0", port=5001, log_level="info")).run_in_thread(): yield
+        with TestServer(config=uvicorn.Config("app:app", host="0.0.0.0", port=5002, log_level="info")).run_in_thread(): yield
 
     def test_commands():
         cmd = Command.from_json("ping", '{"cid": 1}')
@@ -950,6 +950,47 @@ try:
         page.wait_for_selector(f".chat-message:nth-child({2 * settings.message_history_page_size})")
         assert page.locator(".chat-message").count() == 2 * settings.message_history_page_size
         assert page.locator(".chat-message").locator(f"nth={2 * settings.message_history_page_size - 1}").locator("p").inner_html().startswith("1121")
+
+        # switch to "random" channel
+        page.get_by_test_id("nav-to-channel-2").click()
+        page.wait_for_load_state()
+
+        assert page.url.endswith("/c/2")
+
+        # send a message
+
+        page.get_by_placeholder("Message #random").fill("hello world")
+        page.get_by_placeholder("Message #random").press("Enter")
+
+        page.wait_for_selector(".chat-message")
+        assert page.locator(".chat-message").count() == 1
+
+        page.locator(".chat-message").locator("p").inner_html().startswith("hello world")
+
+    def test_messaging_interaction(playwright):
+        browser = playwright.chromium.launch()
+        
+        steven_session = browser.new_context()
+        bob_session = browser.new_context()
+
+        steven_page = steven_session.new_page()
+        bob_page = bob_session.new_page()
+
+        steven_page.goto("http://localhost:5002")
+        steven_page.get_by_placeholder("Name").fill("Steven")
+        steven_page.get_by_placeholder("Email").fill("steven@tc.com")
+        steven_page.get_by_role("button", name="login").click()
+        
+        assert steven_page.url.endswith("/c/1")
+
+        bob_page.goto("http://localhost:5002")
+        bob_page.get_by_placeholder("Name").fill("Bob")
+        bob_page.get_by_placeholder("Email").fill("bob@tc.com")
+        bob_page.get_by_role("button", name="login").click()
+        
+        assert bob_page.url.endswith("/c/1")
+
+
 
 
 except: pass
