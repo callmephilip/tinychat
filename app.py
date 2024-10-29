@@ -39,7 +39,7 @@ except ImportError: pass
 # re https://www.creative-tim.com/twcomponents/component/slack-clone-1
 # re https://systemdesign.one/slack-architecture/
 
-# TODO: check on scroller for when there are few messages. only add stuff when we have cursors and all
+
 # TODO: figure out socket authentication
 # TODO: support markdown in messages?
 # TODO: people can log out
@@ -195,6 +195,7 @@ class ChannelMessageWCtx:
 
     @staticmethod
     def decode_cursor(cursor: str) -> Tuple[int, str]:
+        if not cursor: return 0, None
         r = tuple(map(lambda x: x.decode("ascii"), base64.b64decode(cursor).split(b"-")))
         return int(r[0]), r[1]
 
@@ -1030,7 +1031,7 @@ try:
         # bob sends a message on #random in the meantime
 
         steven_page.goto(f"{base_url}/c/1")
-        assert steven_page.url.endswith("/c/1")
+        steven_page.wait_for_url("**/c/1")
 
         bob_page.get_by_placeholder("Message #random").fill("sending another message to random")
         bob_page.get_by_placeholder("Message #random").press("Enter")
@@ -1066,7 +1067,7 @@ try:
         # steven navigates to the DM channel
 
         steven_page.goto(f"{base_url}/c/3")
-        assert steven_page.url.endswith("/c/3")
+        steven_page.wait_for_url("**/c/3")
 
         steven_page.wait_for_selector(".chat-message")
         assert steven_page.locator(".chat-message").count() == 1
@@ -1081,7 +1082,7 @@ try:
 
         # back to Bob now
 
-        assert bob_page.url.endswith("/c/3")
+        bob_page.wait_for_url("**/c/3")
 
         bob_page.wait_for_selector(".chat-message:nth-child(1)")
         assert bob_page.locator(".chat-message").count() == 2
