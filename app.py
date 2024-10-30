@@ -1,7 +1,7 @@
 import logging, json, time, dataclasses, typing, hashlib, urllib, base64, random, threading, uvicorn, contextlib
 from lorem_text import lorem
 from fasthtml.common import *
-from lucide_fasthtml import Lucide
+from fasthtml.svg import Svg
 from shad4fast import *
 from shad4fast.components.button import btn_variants, btn_base_cls, btn_sizes
 from tractor import connect_tractor
@@ -37,12 +37,21 @@ except ImportError: pass
 # | @Sarah                         |                               |
 # +-------------------------------+-------------------------------+
 
+def build_icon(content: str):
+    def icon(cls: str): 
+        return Svg(xmlns="http://www.w3.org/2000/svg", width="24", height="24", viewBox="0 0 24 24", fill="none", stroke="currentColor", stroke_width="2", stroke_linecap="round", stroke_linejoin="round", cls=cls)(
+            NotStr(content)
+        )
+    return icon
+
+I_USER = build_icon("<path d=\"M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2\"></path><circle cx=\"12\" cy=\"7\" r=\"4\"></circle>") 
+I_USERS = build_icon("<path d=\"M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2\"></path><circle cx=\"9\" cy=\"7\" r=\"4\"></circle><path d=\"M22 21v-2a4 4 0 0 0-3-3.87\"></path><path d=\"M16 3.13a4 4 0 0 1 0 7.75\"></path>")
 
 # re https://www.creative-tim.com/twcomponents/component/slack-clone-1
 # re https://systemdesign.one/slack-architecture/
 
+# TODO: fix mobile layout
 # TODO: pretty message timestamps
-
 # TODO: figure out if there is a way to simplify some of the queries using triggers and views instead
 # TODO: fix layout
 # TODO: figure out socket authentication
@@ -367,7 +376,7 @@ def __ft__(self: User): return Div('👤', self.name)
 @patch
 def __ft__(self: ChannelForMember):
     cls=clsx("w-full justify-start", btn_base_cls, btn_sizes["sm"], not self.is_selected and btn_variants["ghost"], self.is_selected and btn_variants["default"], self.has_unread_messages and "has-unread-messages")
-    icon = Lucide("user" if self.channel.is_direct else "users", cls="mr-2 h-4 w-4")
+    icon = I_USER(cls="mr-2 h-4 w-4") if self.channel.is_direct else I_USERS(cls="mr-2 h-4 w-4")
     return A(hx_target="#main", hx_get=f"/c/{self.channel.id}", hx_push_url="true", cls=cls, **{ "data-testid": f"nav-to-channel-{self.channel.id}" }, style="justify-content: flex-start !important;")(
         icon, Div(f'{self.channel_name}') if not self.has_unread_messages else Strong(f'{icon} {self.channel_name}')
     )
@@ -376,7 +385,7 @@ def __ft__(self: ChannelForMember):
 def __ft__(self: ChannelPlaceholder):
     cls=clsx("w-full justify-start", btn_sizes["sm"], btn_base_cls, btn_variants["ghost"])
     return A(hx_target="#main", hx_get=f"/direct/{self.member.id}", hx_push_url="true", **{ "data-testid": f"dm-{self.member.id}"}, cls=cls, style="justify-content: flex-start !important;")(
-        Lucide("user", cls="mr-2 h-4 w-4"),
+        I_USER(cls="mr-2 h-4 w-4"),
         self.member.name
     )
 
