@@ -378,7 +378,7 @@ def __ft__(self: ChannelForMember):
     cls=clsx("w-full justify-start", btn_base_cls, btn_sizes["sm"], not self.is_selected and btn_variants["ghost"], self.is_selected and btn_variants["default"], self.has_unread_messages and "has-unread-messages")
     icon = I_USER(cls="mr-2 h-4 w-4") if self.channel.is_direct else I_USERS(cls="mr-2 h-4 w-4")
     return A(hx_target="#main", hx_get=f"/c/{self.channel.id}", hx_push_url="true", cls=cls, **{ "data-testid": f"nav-to-channel-{self.channel.id}" }, style="justify-content: flex-start !important;")(
-        icon, Div(f'{self.channel_name}') if not self.has_unread_messages else Strong(f'{icon} {self.channel_name}')
+        icon, Div(f'{self.channel_name}') if not self.has_unread_messages else Strong(self.channel_name)
     )
 
 @patch
@@ -408,11 +408,9 @@ def __ft__(self: ListOfChannelsForMember):
         Div(cls="px-3 py-2")(
             H2(cls="mb-2 px-4 text-lg font-semibold tracking-tight")("Groups"),
             ScrollArea(*self.group_channels, cls="h-[300px] px-1")
-            # Div(cls="px-4 space-y-1")()
         ),
         Div(cls="px-3 py-2")(
             H2(cls="mb-2 px-4 text-lg font-semibold tracking-tight")("DMs"),
-            # Div(cls="px-4 space-y-1")()
             ScrollArea(*self.direct_channels, *self.direct_channel_placeholders, cls="h-[300px] px-1")
         )
     )
