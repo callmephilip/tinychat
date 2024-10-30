@@ -1,8 +1,9 @@
 import logging, json, time, dataclasses, typing, hashlib, urllib, base64, random, threading, uvicorn, contextlib
 from lorem_text import lorem
 from fasthtml.common import *
+from lucide_fasthtml import Lucide
 from shad4fast import *
-from shad4fast.components.button import btn_variants, btn_base_cls, btn_sizes
+from shad4fast.components.button import btn_variants, btn_base_cls
 from tractor import connect_tractor
 
 try:
@@ -83,7 +84,7 @@ rt = app.route
 logging.basicConfig(format="%(asctime)s - %(message)s",datefmt="🧵 %d-%b-%y %H:%M:%S",level=logging.DEBUG,handlers=[logging.StreamHandler()])
 logger = logging.getLogger(__name__)
 
-def get_image_url(email: str, s=250, d="https://www.example.com/default.jpg") -> str:
+def get_image_url(email: str, s=250, d="/default.jpg") -> str:
     email_hash, query_params = hashlib.sha256(email.lower().encode('utf-8')).hexdigest(), urllib.parse.urlencode({'d': d, 's': str(s)})
     return f"https://www.gravatar.com/avatar/{email_hash}?{query_params}"
 
@@ -363,15 +364,15 @@ def __ft__(self: User): return Div('👤', self.name)
 @patch
 def __ft__(self: ChannelForMember):
     cls=clsx(btn_base_cls, not self.is_selected and btn_variants["ghost"], self.is_selected and btn_variants["default"], self.has_unread_messages and "has-unread-messages")
-    icon = "👤" if self.channel.is_direct else "💬"
+    icon = Lucide("user" if self.channel.is_direct else "users", cls="mr-2 h-4 w-4")
     return A(hx_target="#main", hx_get=f"/c/{self.channel.id}", hx_push_url="true", cls=cls, **{ "data-testid": f"nav-to-channel-{self.channel.id}" })(
-        Div(f'{icon} {self.channel_name}') if not self.has_unread_messages else Strong(f'{icon} {self.channel_name}')
+        icon, Div(f'{self.channel_name}') if not self.has_unread_messages else Strong(f'{icon} {self.channel_name}')
     )
 
 @patch
 def __ft__(self: ChannelPlaceholder):
-    return A(hx_target="#main", hx_get=f"/direct/{self.member.id}", hx_push_url="true", **{ "data-testid": f"dm-{self.member.id}"}, cls=clsx("w-full justify-start", btn_base_cls, btn_variants["ghost"], btn_sizes['default']))(
-        Img(src=self.member.image_url, cls='w-10 h-10 rounded mr-3'),
+    return A(hx_target="#main", hx_get=f"/direct/{self.member.id}", hx_push_url="true", **{ "data-testid": f"dm-{self.member.id}"}, cls=clsx(btn_base_cls, btn_variants["ghost"]))(
+        Lucide("user", cls="mr-2 h-4 w-4"),
         self.member.name
     )
 
@@ -391,11 +392,10 @@ def __ft__(self: ChannelMessageWCtx):
 @patch
 def __ft__(self: ListOfChannelsForMember):
     return Nav(id="channels", cls="grid gap-1 px-2", hx_swap_oob="true")(
-        Ul(*[Li(gc) for gc in self.group_channels]),
+        *self.group_channels,
         Separator(),
-        Ul(*[Li(dc) for dc in self.direct_channels]), 
-        Separator(), 
-        Ul(*[Li(dcp) for dcp in self.direct_channel_placeholders])
+        *self.direct_channels,
+        *self.direct_channel_placeholders
     )
 
 ## end of UI
@@ -404,10 +404,13 @@ def Layout(content: FT, m: Member, w: Workspace, channel: Channel) -> FT:
     print(f"MEMBER: {m} WORKSPACE: {w}")
     return Body(data_uid=m.user_id,data_wid=1,data_mid=m.id, cls="font-sans antialiased h-screen flex bg-background", hx_ext='ws', ws_connect=f'/ws?mid={m.id}')(
         Div(cls="bg-background flex-none w-64 pb-6 hidden md:block")(
+            # workspace info
             w,
             Separator(),
+            # list of channels
             Div(cls="group flex flex-col gap-4 py-2")(ListOfChannelsForMember(member=m, current_channel=channel)),
             Separator(),
+            # profile info
             Div(cls='flex items-center px-4')(
                 Img(src=m.image_url, cls='w-10 h-10 mr-3'),
                 Div(cls='text-sm')(
