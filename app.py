@@ -3,7 +3,7 @@ from lorem_text import lorem
 from fasthtml.common import *
 from lucide_fasthtml import Lucide
 from shad4fast import *
-from shad4fast.components.button import btn_variants, btn_base_cls
+from shad4fast.components.button import btn_variants, btn_base_cls, btn_sizes
 from tractor import connect_tractor
 
 try:
@@ -40,6 +40,8 @@ except ImportError: pass
 
 # re https://www.creative-tim.com/twcomponents/component/slack-clone-1
 # re https://systemdesign.one/slack-architecture/
+
+# TODO: pretty message timestamps
 
 # TODO: figure out if there is a way to simplify some of the queries using triggers and views instead
 # TODO: fix layout
@@ -97,6 +99,7 @@ class Settings:
     host_url: str = "http://localhost:5001"
     default_channels: List[str] = dataclasses.field(default_factory=lambda: ["general", "random"])
     message_history_page_size = 40
+    ping_interval_in_seconds: float = 5.0
 
 
 settings = Settings()
@@ -341,7 +344,7 @@ def setup_database(test=False):
         ts, target_channel = get_ts(), channels()[0]
         for i in range(1200): channel_messages.insert(ChannelMessage(created_at=ts + i, channel=target_channel.id, sender=member.id, message=f"{i+1} {lorem.sentence()}"))
 
-    if not test: connect_tractor(app, db.conn)
+    # if not test: connect_tractor(app, db.conn)
     
 
 setup_database(os.environ.get("TEST_MODE", False))
@@ -356,22 +359,23 @@ async def ws_send_to_member(member_id: int, data):
 ## UI
 
 @patch
-def __ft__(self: Workspace): return Div('👨‍🏭', Strong(self.name))
+def __ft__(self: Workspace): return H1(cls="text-l font-bold pb-2")(f'👨‍🏭 {self.name}')
 
 @patch
 def __ft__(self: User): return Div('👤', self.name)
 
 @patch
 def __ft__(self: ChannelForMember):
-    cls=clsx(btn_base_cls, not self.is_selected and btn_variants["ghost"], self.is_selected and btn_variants["default"], self.has_unread_messages and "has-unread-messages")
+    cls=clsx("w-full justify-start", btn_base_cls, btn_sizes["sm"], not self.is_selected and btn_variants["ghost"], self.is_selected and btn_variants["default"], self.has_unread_messages and "has-unread-messages")
     icon = Lucide("user" if self.channel.is_direct else "users", cls="mr-2 h-4 w-4")
-    return A(hx_target="#main", hx_get=f"/c/{self.channel.id}", hx_push_url="true", cls=cls, **{ "data-testid": f"nav-to-channel-{self.channel.id}" })(
+    return A(hx_target="#main", hx_get=f"/c/{self.channel.id}", hx_push_url="true", cls=cls, **{ "data-testid": f"nav-to-channel-{self.channel.id}" }, style="justify-content: flex-start !important;")(
         icon, Div(f'{self.channel_name}') if not self.has_unread_messages else Strong(f'{icon} {self.channel_name}')
     )
 
 @patch
 def __ft__(self: ChannelPlaceholder):
-    return A(hx_target="#main", hx_get=f"/direct/{self.member.id}", hx_push_url="true", **{ "data-testid": f"dm-{self.member.id}"}, cls=clsx(btn_base_cls, btn_variants["ghost"]))(
+    cls=clsx("w-full justify-start", btn_sizes["sm"], btn_base_cls, btn_variants["ghost"])
+    return A(hx_target="#main", hx_get=f"/direct/{self.member.id}", hx_push_url="true", **{ "data-testid": f"dm-{self.member.id}"}, cls=cls, style="justify-content: flex-start !important;")(
         Lucide("user", cls="mr-2 h-4 w-4"),
         self.member.name
     )
@@ -391,35 +395,41 @@ def __ft__(self: ChannelMessageWCtx):
 
 @patch
 def __ft__(self: ListOfChannelsForMember):
-    return Nav(id="channels", cls="grid gap-1 px-2", hx_swap_oob="true")(
-        *self.group_channels,
-        Separator(),
-        *self.direct_channels,
-        *self.direct_channel_placeholders
+    return Div(id="channels", hx_swap_oob="true")(
+        Div(cls="px-3 py-2")(
+            H2(cls="mb-2 px-4 text-lg font-semibold tracking-tight")("Groups"),
+            ScrollArea(*self.group_channels, cls="h-[300px] px-1")
+            # Div(cls="px-4 space-y-1")()
+        ),
+        Div(cls="px-3 py-2")(
+            H2(cls="mb-2 px-4 text-lg font-semibold tracking-tight")("DMs"),
+            # Div(cls="px-4 space-y-1")()
+            ScrollArea(*self.direct_channels, *self.direct_channel_placeholders, cls="h-[300px] px-1")
+        )
     )
 
 ## end of UI
 
 def Layout(content: FT, m: Member, w: Workspace, channel: Channel) -> FT:
-    print(f"MEMBER: {m} WORKSPACE: {w}")
     return Body(data_uid=m.user_id,data_wid=1,data_mid=m.id, cls="font-sans antialiased h-screen flex bg-background", hx_ext='ws', ws_connect=f'/ws?mid={m.id}')(
-        Div(cls="bg-background flex-none w-64 pb-6 hidden md:block")(
-            # workspace info
-            w,
-            Separator(),
-            # list of channels
-            Div(cls="group flex flex-col gap-4 py-2")(ListOfChannelsForMember(member=m, current_channel=channel)),
-            Separator(),
-            # profile info
-            Div(cls='flex items-center px-4')(
-                Img(src=m.image_url, cls='w-10 h-10 mr-3'),
-                Div(cls='text-sm')(
-                    Div(f"{m.name} - {m.id}", cls='font-bold'),
-                    Div('Online', cls='text-xs text-green-400')
+        # sidebar
+        Div(cls="flex-none w-64 pb-6 hidden md:block pb-12 overflow-hidden")(
+            Div(cls="space-y-4 py-4")(
+                # workspace info
+                Div(cls="px-3 py-2 border-b")(w),
+                ListOfChannelsForMember(member=m, current_channel=channel),
+                # profile info
+                Div(cls='flex items-center px-4')(
+                    Img(src=m.image_url, cls='w-10 h-10 mr-3'),
+                    Div(cls='text-sm')(
+                        Div(f"{m.name} - {m.id}", cls='font-bold'),
+                        Div('Online', cls='text-xs text-green-400')
+                    )
                 )
             )
         ),
-        Div(id="main", cls="flex-1 flex flex-col bg-white overflow-hidden")(content),
+        # main content
+        Div(id="main", cls="flex-1 flex flex-col bg-white overflow-hidden md:border-l")(content),
         HtmxOn('oobAfterSwap', """
             if (event.detail.target.id.match(/channel-[0-9]+/ig)) {
                console.log(">>>>> current scroll top is", event.detail.target.scrollTop);
@@ -510,7 +520,7 @@ def channel(req: Request, cid: int):
     channel_name = channel.name if not channel.is_direct else channel_members(where=f"channel={cid} and member!={m.id}")[0].name
     ping_cmd = { "command": "ping", "d": { "cid": cid }, "auth": { "mid": m.id } }
 
-    convo = Div(cls='border-b flex px-6 py-2 items-center flex-none', hx_trigger="load, every 5s", hx_vals=f'{json.dumps(ping_cmd)}', **{"ws_send": "true"})(
+    convo = Div(cls='border-b flex px-6 py-2 items-center flex-none', hx_trigger=f"load, every {settings.ping_interval_in_seconds}s", hx_vals=f'{json.dumps(ping_cmd)}', **{"ws_send": "true"})(
         Div(cls='flex flex-col')(
             H3(cls='text-grey-darkest mb-1 font-extrabold')(f"#{channel_name}"),
             Div("Chit-chattin' about ugly HTML and mixing of concerns.", cls='text-grey-dark text-sm truncate')
