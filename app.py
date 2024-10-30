@@ -37,13 +37,7 @@ except ImportError: pass
 # | @Sarah                         |                               |
 # +-------------------------------+-------------------------------+
 
-def build_icon(content: str):
-    def icon(cls: str): 
-        return Svg(xmlns="http://www.w3.org/2000/svg", width="24", height="24", viewBox="0 0 24 24", fill="none", stroke="currentColor", stroke_width="2", stroke_linecap="round", stroke_linejoin="round", cls=cls)(
-            NotStr(content)
-        )
-    return icon
-
+def build_icon(content: str): return lambda cls: Svg(width="24", height="24", viewBox="0 0 24 24", fill="none", stroke="currentColor", stroke_width="2", stroke_linecap="round", stroke_linejoin="round", cls=cls)(NotStr(content))
 I_USER = build_icon("<path d=\"M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2\"></path><circle cx=\"12\" cy=\"7\" r=\"4\"></circle>") 
 I_USERS = build_icon("<path d=\"M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2\"></path><circle cx=\"9\" cy=\"7\" r=\"4\"></circle><path d=\"M22 21v-2a4 4 0 0 0-3-3.87\"></path><path d=\"M16 3.13a4 4 0 0 1 0 7.75\"></path>")
 
@@ -439,16 +433,8 @@ def Layout(content: FT, m: Member, w: Workspace, channel: Channel) -> FT:
         Div(id="main", cls="flex-1 flex flex-col bg-white overflow-hidden md:border-l")(content),
         HtmxOn('oobAfterSwap', """
             if (event.detail.target.id.match(/channel-[0-9]+/ig)) {
-               console.log(">>>>> current scroll top is", event.detail.target.scrollTop);
-               console.log(">>>>> current scroll height is", event.detail.target.scrollHeight);
-               console.log(">>>>> ratio is", Math.abs(event.detail.target.scrollTop / event.detail.target.scrollHeight));
-
-               var body = document.body, html = document.documentElement;
-               const height = Math.max(event.detail.target.clientHeight, event.detail.target.scrollHeight, event.detail.target.offsetHeight );
-
-               if (Math.abs(event.detail.target.scrollTop) / height < 0.2) {                    
-                    event.detail.target.scrollTop = event.detail.target.scrollHeight;
-               }
+               const height = Math.max(event.detail.target.clientHeight, event.detail.target.scrollHeight, event.detail.target.offsetHeight);
+               if (Math.abs(event.detail.target.scrollTop) / height < 0.2) { event.detail.target.scrollTop = event.detail.target.scrollHeight; }
             }
         """),
     )
