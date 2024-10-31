@@ -436,11 +436,11 @@ def Sidebar(m: Member, w: Workspace, channel: Channel, is_mobile: bool):
     )
 
 def Layout(content: FT, m: Member, w: Workspace, channel: Channel, is_mobile: bool) -> FT:
-    return Body(cls="font-sans antialiased h-screen flex bg-background", hx_ext='ws', ws_connect=f'/ws?mid={m.id}')(
+    return Body(cls="font-sans antialiased h-svh flex bg-background overflow-hidden", hx_ext='ws', ws_connect=f'/ws?mid={m.id}')(
         # sidebar
         Sidebar(m, w, channel, is_mobile) if not is_mobile else None,
         # main content
-        Div(id="main", cls="flex-1 flex flex-col bg-white overflow-hidden md:border-l")(content),
+        Div(id="main", cls="flex-1 h-svh flex flex-col bg-white overflow-hidden md:border-l")(content),
         # mobile version of the sidebar
         # based on the approach from https://dev.to/seppegadeyne/crafting-a-mobile-menu-with-tailwind-css-without-javascript-1814
         Label(fr='mobile-menu', cls='relative z-40 cursor-pointer')(
