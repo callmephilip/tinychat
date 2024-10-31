@@ -1,4 +1,4 @@
-import logging, json, time, dataclasses, typing, hashlib, urllib, base64, random, threading, uvicorn, contextlib
+import logging, json, time, dataclasses, typing, hashlib, urllib, base64, random, threading, uvicorn, contextlib, user_agents
 from lorem_text import lorem
 from fasthtml.common import *
 from fasthtml.svg import Svg
@@ -40,6 +40,8 @@ except ImportError: pass
 def build_icon(content: str): return lambda cls: Svg(width="24", height="24", viewBox="0 0 24 24", fill="none", stroke="currentColor", stroke_width="2", stroke_linecap="round", stroke_linejoin="round", cls=cls)(NotStr(content))
 I_USER = build_icon("<path d=\"M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2\"></path><circle cx=\"12\" cy=\"7\" r=\"4\"></circle>") 
 I_USERS = build_icon("<path d=\"M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2\"></path><circle cx=\"9\" cy=\"7\" r=\"4\"></circle><path d=\"M22 21v-2a4 4 0 0 0-3-3.87\"></path><path d=\"M16 3.13a4 4 0 0 1 0 7.75\"></path>")
+I_PLUS = NotStr("""<svg class="fill-current h-6 w-6 block" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20"><path d="M16 10c0 .553-.048 1-.601 1H11v4.399c0 .552-.447.601-1 .601-.553 0-1-.049-1-.601V11H4.601C4.049 11 4 10.553 4 10c0-.553.049-1 .601-1H9V4.601C9 4.048 9.447 4 10 4c.553 0 1 .048 1 .601V9h4.399c.553 0 .601.447.601 1z"></path></svg>""")
+I_ARROW_LEFT = build_icon("<path d=\"m12 19-7-7 7-7\"></path><path d=\"M19 12H5\"></path>")
 
 # re https://www.creative-tim.com/twcomponents/component/slack-clone-1
 # re https://systemdesign.one/slack-architecture/
@@ -102,7 +104,7 @@ class Settings:
     host_url: str = "http://localhost:5001"
     default_channels: List[str] = dataclasses.field(default_factory=lambda: ["general", "random"])
     message_history_page_size = 40
-    ping_interval_in_seconds: float = 5.0
+    ping_interval_in_seconds: float = 5
 
 
 settings = Settings()
@@ -270,7 +272,12 @@ class ChannelPlaceholder: member: Member
 
 @dataclass
 class ListOfChannelsForMember:
+    # TODO: cache properties?
     member: Member; current_channel: Channel
+
+    @property
+    def has_unread_messages(self) -> bool:
+        return any(map(lambda ch: ch.has_unread_messages, self.group_channels + self.direct_channels))
 
     @property
     def group_channels(self) -> List[ChannelForMember]:
@@ -288,7 +295,6 @@ class ListOfChannelsForMember:
         r = list(map(lambda ch: ChannelForMember.from_channel_member(ch), channel_members(where=f"""member == {self.member.id} and channel in ({dcs})""")))
         for c in r: c.is_selected = c.channel.id == self.current_channel.id
         return r
-
 
     @property
     def direct_channel_placeholders(self) -> List[ChannelPlaceholder]:
@@ -411,26 +417,39 @@ def __ft__(self: ListOfChannelsForMember):
 
 ## end of UI
 
-def Layout(content: FT, m: Member, w: Workspace, channel: Channel) -> FT:
-    return Body(data_uid=m.user_id,data_wid=1,data_mid=m.id, cls="font-sans antialiased h-screen flex bg-background", hx_ext='ws', ws_connect=f'/ws?mid={m.id}')(
-        # sidebar
-        Div(cls="flex-none w-64 pb-6 hidden md:block pb-12 overflow-hidden")(
-            Div(cls="space-y-4 py-4")(
-                # workspace info
-                Div(cls="px-3 py-2 border-b")(w),
-                ListOfChannelsForMember(member=m, current_channel=channel),
-                # profile info
-                Div(cls='flex items-center px-4')(
-                    Img(src=m.image_url, cls='w-10 h-10 mr-3'),
-                    Div(cls='text-sm')(
-                        Div(f"{m.name} - {m.id}", cls='font-bold'),
-                        Div('Online', cls='text-xs text-green-400')
-                    )
+def Sidebar(m: Member, w: Workspace, channel: Channel, is_mobile: bool):
+    attrs = {"hx-on::after-request": "setTimeout(() => { document.querySelector('#mobile-menu').click(); }, 300)"} if is_mobile else {}
+    return Div(cls="flex-none w-64 pb-6 block pb-12 overflow-hidden", **attrs)(
+        Div(cls="space-y-4 py-4")(
+            # workspace info
+            Div(cls="px-3 py-2 border-b")(w),
+            ListOfChannelsForMember(member=m, current_channel=channel),
+            # profile info
+            Div(cls='flex items-center px-4')(
+                Img(src=m.image_url, cls='w-10 h-10 mr-3'),
+                Div(cls='text-sm')(
+                    Div(f"{m.name} - {m.id}", cls='font-bold'),
+                    Div('Online', cls='text-xs text-green-400')
                 )
             )
-        ),
+        )
+    )
+
+def Layout(content: FT, m: Member, w: Workspace, channel: Channel, is_mobile: bool) -> FT:
+    return Body(cls="font-sans antialiased h-screen flex bg-background", hx_ext='ws', ws_connect=f'/ws?mid={m.id}')(
+        # sidebar
+        Sidebar(m, w, channel, is_mobile) if not is_mobile else None,
         # main content
         Div(id="main", cls="flex-1 flex flex-col bg-white overflow-hidden md:border-l")(content),
+        # mobile version of the sidebar
+        # based on the approach from https://dev.to/seppegadeyne/crafting-a-mobile-menu-with-tailwind-css-without-javascript-1814
+        Label(fr='mobile-menu', cls='relative z-40 cursor-pointer')(
+            Input(type='checkbox', id='mobile-menu', cls='peer hidden'),
+            Div(cls='fixed inset-0 z-40 hidden h-full w-full bg-black/50 backdrop-blur-sm peer-checked:block'),
+            Div(cls='fixed top-0 right-0 z-40 h-full w-full translate-x-full overflow-y-auto overscroll-y-none transition duration-500 peer-checked:translate-x-0')(
+                Div(cls='float-right min-h-full w-[85%] bg-white px-6 pt-12 shadow-2xl')(Sidebar(m, w, channel, is_mobile))
+            )
+        ) if is_mobile else None,
         HtmxOn('oobAfterSwap', """
             if (event.detail.target.id.match(/channel-[0-9]+/ig)) {
                const height = Math.max(event.detail.target.clientHeight, event.detail.target.scrollHeight, event.detail.target.offsetHeight);
@@ -460,8 +479,7 @@ def post(login:Login, sess):
     # automatically associate the user with the first workspace + default group channels
     member = members.insert(Member(user_id=user.id, workspace_id=workspace.id))
     default_channels = ",".join(map(lambda c: f"'{c}'", settings.default_channels))
-    for channel in channels(where=f"workspace_id={workspace.id} and name in ({default_channels})"):
-        channel_members.insert(ChannelMember(channel=channel.id, member=member.id))
+    for channel in channels(where=f"workspace_id={workspace.id} and name in ({default_channels})"): channel_members.insert(ChannelMember(channel=channel.id, member=member.id))
     sess['mid'], sess['wid'] = member.id, workspace.id
 
     return RedirectResponse('/', status_code=303)
@@ -474,11 +492,7 @@ def home(): return Redirect(f"/c/{channels()[0].id}")
 def get(): return JSONResponse({"status": "ok"})
 
 async def dispatch_incoming_message(m: ChannelMessage):
-    print(f"dispatching message: {m}")
-    print(f'initial channel members: {channel_members(where=f"channel={m.channel}")}')
     members_to_notify = list(filter(lambda cm: cm.member != m.sender, channel_members(where=f"channel={m.channel}")))
-    print(f">>>>>> members are: {members_to_notify}")
-    print(f">>>>>>> message is: {m}")
     m_with_ctx = ChannelMessage.with_ctx(m)
     for member in members_to_notify:
         s = sockets(where=f"mid={member.member}")
@@ -486,9 +500,7 @@ async def dispatch_incoming_message(m: ChannelMessage):
         # send message to each socket
         for c_s in s:
             logger.debug(f"sending message to {c_s.sid} {connections[c_s.sid]}")
-            await connections[c_s.sid](Div(id=f"channel-{m.channel}", hx_swap="scroll:bottom", hx_swap_oob="afterbegin", **{
-                "hx-on::after-settle ": f"""console.log('all settled')"""
-            })(m_with_ctx))
+            await connections[c_s.sid](Div(id=f"channel-{m.channel}", hx_swap="scroll:bottom", hx_swap_oob="afterbegin")(m_with_ctx))
 
 @rt('/messages/send', methods=['POST'])
 def send_msg(msg:str, cid:int, req: Request):
@@ -509,23 +521,21 @@ def list_channel_messages(req: Request, cid: int):
 
 @rt('/c/{cid}')
 def channel(req: Request, cid: int):
-    m, w, frm_id, msgs_id, channel = req.scope['m'], req.scope['w'], f"f-{cid}", f"channel-{cid}", channels[cid]
+    is_mobile, m, w, frm_id, msgs_id, channel = user_agents.parse(req.headers.get('User-Agent')).is_mobile, req.scope['m'], req.scope['w'], f"f-{cid}", f"channel-{cid}", channels[cid]
     channel_name = channel.name if not channel.is_direct else channel_members(where=f"channel={cid} and member!={m.id}")[0].name
     ping_cmd = { "command": "ping", "d": { "cid": cid }, "auth": { "mid": m.id } }
 
-    convo = Div(cls='border-b flex px-6 py-2 items-center flex-none', hx_trigger=f"load, every {settings.ping_interval_in_seconds}s", hx_vals=f'{json.dumps(ping_cmd)}', **{"ws_send": "true"})(
-        Div(cls='flex flex-col')(
-            H3(cls='text-grey-darkest mb-1 font-extrabold')(f"#{channel_name}"),
-            Div("Chit-chattin' about ugly HTML and mixing of concerns.", cls='text-grey-dark text-sm truncate')
+    convo = Div(cls="hidden", hx_trigger=f"load, every {settings.ping_interval_in_seconds}s", hx_vals=f'{json.dumps(ping_cmd)}', **{"ws_send": "true"}), Div(cls='border-b flex px-6 py-2 items-center flex-none')(
+        Div(cls='flex flex-row items-center')(
+            Button(variant="ghost", **{"onclick": "document.getElementById('mobile-menu').click()"})(I_ARROW_LEFT(cls="h-6 w-6")),
+            H3(cls='text-grey-darkest font-extrabold')(f"#{channel_name}")
         ),
     ), Div(id=msgs_id, cls='scroller px-6 py-4 flex-1 flex flex-col-reverse overflow-y-scroll')(
         # lazy load first batch of messages
         Div(hx_trigger="load", hx_get=f"/c/messages/{cid}", hx_swap="outerHTML"),
     ), Div(cls='pb-6 px-4 flex-none')(
         Div(cls='flex rounded-lg border-2 border-grey overflow-hidden')(
-            Span(cls='text-3xl text-grey border-r-2 border-grey p-2')(
-                NotStr("""<svg class="fill-current h-6 w-6 block" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20"><path d="M16 10c0 .553-.048 1-.601 1H11v4.399c0 .552-.447.601-1 .601-.553 0-1-.049-1-.601V11H4.601C4.049 11 4 10.553 4 10c0-.553.049-1 .601-1H9V4.601C9 4.048 9.447 4 10 4c.553 0 1 .048 1 .601V9h4.399c.553 0 .601.447.601 1z"></path></svg>""")
-            ),
+            Span(cls='text-3xl text-grey border-r-2 border-grey p-2')(I_PLUS),
             Form(id=frm_id, cls="w-full", hx_post="/messages/send", hx_target=f"#{msgs_id}", hx_swap="afterbegin",
                  **{ "hx-on::after-request": f"""document.querySelector("#{frm_id}").reset(); document.getElementById("{msgs_id}").scrollTop = document.getElementById("{msgs_id}").scrollHeight;""" }
             )(
@@ -534,7 +544,7 @@ def channel(req: Request, cid: int):
             ),
         )
     )
-    return convo if req.headers.get('Hx-Request') else Layout(convo, m, w, channel)
+    return convo if req.headers.get('Hx-Request') else Layout(convo, m, w, channel, is_mobile)
 
 @rt('/direct/{to_m}')
 def direct(req: Request, to_m: int):
