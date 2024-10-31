@@ -422,7 +422,7 @@ def __ft__(self: ListOfChannelsForMember):
 
 def Sidebar(m: Member, w: Workspace, channel: Channel, is_mobile: bool):
     attrs = {"hx-on::after-request": "setTimeout(() => { document.querySelector('#mobile-menu').click(); }, 300)"} if is_mobile else {}
-    return Div(cls="flex-none w-64 pb-6 block pb-12 overflow-hidden", **attrs)(
+    return Div(cls="flex-none md:w-64 block overflow-hidden", **attrs)(
         Div(cls="space-y-4")(
             # workspace info
             Div(cls="px-3 py-2 border-b")(w),
@@ -449,8 +449,10 @@ def Layout(*content, m: Member, w: Workspace, channel: Channel, is_mobile: bool)
         Label(fr='mobile-menu', cls='relative z-40 cursor-pointer')(
             Input(type='checkbox', id='mobile-menu', cls='peer hidden'),
             Div(cls='fixed inset-0 z-40 hidden h-full w-full bg-black/50 backdrop-blur-sm peer-checked:block'),
-            Div(cls='fixed top-0 right-0 z-40 h-full w-full translate-x-full overflow-y-auto overscroll-y-none transition duration-500 peer-checked:translate-x-0')(
-                Div(cls='float-right min-h-full w-[85%] bg-white px-6 pt-12 shadow-2xl')(Sidebar(m, w, channel, is_mobile))
+            Div(cls='fixed top-0 left-0 z-40 h-full w-full -translate-x-full overflow-y-auto overscroll-y-none transition duration-500 peer-checked:translate-x-0')(
+                Div(cls='float-left min-h-full w-[85%] bg-white shadow-2xl')(
+                    Sidebar(m, w, channel, is_mobile)
+                )
             )
         ) if is_mobile else None,
         HtmxOn('oobAfterSwap', """
