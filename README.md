@@ -1,5 +1,10 @@
 # Hello
 
+# Hacking on the app locally
+
+```
+LIVE_RELOAD=yes poetry run python app.py
+```
 
 # Running tests locally
 

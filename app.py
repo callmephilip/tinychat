@@ -13,6 +13,14 @@ try:
     from playwright.sync_api import Page, Playwright, expect
 except ImportError: pass
 
+# TODO: people can log out
+# TODO: figure out if there is a way to simplify some of the queries using triggers and views instead
+# TODO: figure out socket authentication
+# TODO: support markdown in messages?
+# TODO: maybe a login that is more like a login? (email link or is this too much)
+# TODO: user roles + admin mode (when you are the first guy in)
+
+
 # The beginning of wisdom is the ability to call things by their right names - Confucius
 
 
@@ -48,14 +56,6 @@ I_ARROW_LEFT = build_icon("<path d=\"m12 19-7-7 7-7\"></path><path d=\"M19 12H5\
 # re https://www.creative-tim.com/twcomponents/component/slack-clone-1
 # re https://systemdesign.one/slack-architecture/
 
-# TODO: figure out if there is a way to simplify some of the queries using triggers and views instead
-# TODO: fix layout
-# TODO: figure out socket authentication
-# TODO: support markdown in messages?
-# TODO: people can log out
-# TODO: maybe a login that is more like a login? (email link or is this too much)
-# TODO: user roles + admin mode (when you are the first guy in)
-
 login_redir = RedirectResponse('/login', status_code=303)
 def check_auth(req, sess):
     mid, wid = sess.get('mid', None), sess.get('wid', None)
@@ -75,7 +75,8 @@ def clsx(*args): return " ".join([arg for arg in args if arg])
 
 bware = Beforeware(check_auth, skip=[r'/favicon\.ico', r'/static/.*', r'.*\.css', '/login', '/healthcheck'])
 
-app = FastHTMLWithLiveReload(debug=True, default_hdrs=False, hdrs=[
+App = FastHTMLWithLiveReload if os.environ.get("LIVE_RELOAD", False) else FastHTML
+app = App(debug=True, default_hdrs=False, hdrs=[
     htmxsrc, fhjsscr, charset,
     Meta(name="viewport", content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"),
     ShadHead(tw_cdn=True),
