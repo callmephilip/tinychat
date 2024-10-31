@@ -1,6 +1,7 @@
 import logging, json, time, dataclasses, typing, hashlib, urllib, base64, random, threading, uvicorn, contextlib, user_agents
 from lorem_text import lorem
 from fasthtml.common import *
+from fasthtml.core import htmxsrc, fhjsscr, charset
 from fasthtml.svg import Svg
 from shad4fast import *
 from shad4fast.components.button import btn_variants, btn_base_cls, btn_sizes
@@ -75,7 +76,9 @@ def clsx(*args): return " ".join([arg for arg in args if arg])
 
 bware = Beforeware(check_auth, skip=[r'/favicon\.ico', r'/static/.*', r'.*\.css', '/login', '/healthcheck'])
 
-app = FastHTMLWithLiveReload(debug=True, hdrs=[
+app = FastHTMLWithLiveReload(debug=True, default_hdrs=False, hdrs=[
+    htmxsrc, fhjsscr, charset,
+    Meta(name="viewport", content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"),
     ShadHead(tw_cdn=True),
     Style("""  
         .messages-loading.htmx-request {
@@ -422,7 +425,7 @@ def Sidebar(m: Member, w: Workspace, channel: Channel, is_mobile: bool):
     return Div(cls="flex-none w-64 pb-6 block pb-12 overflow-hidden", **attrs)(
         Div(cls="space-y-4 py-4")(
             # workspace info
-            Div(cls="px-3 py-2 border-b")(w),
+            Div(cls="px-3 py-2 border-b", style="position: fixed; width: 100%; background-color: white;")(w),
             ListOfChannelsForMember(member=m, current_channel=channel),
             # profile info
             Div(cls='flex items-center px-4')(
@@ -436,11 +439,11 @@ def Sidebar(m: Member, w: Workspace, channel: Channel, is_mobile: bool):
     )
 
 def Layout(content: FT, m: Member, w: Workspace, channel: Channel, is_mobile: bool) -> FT:
-    return Body(cls="font-sans antialiased h-svh flex bg-background overflow-hidden", hx_ext='ws', ws_connect=f'/ws?mid={m.id}')(
+    return Body(cls="font-sans antialiased h-dvh flex bg-background overflow-hidden", hx_ext='ws', ws_connect=f'/ws?mid={m.id}')(
         # sidebar
         Sidebar(m, w, channel, is_mobile) if not is_mobile else None,
         # main content
-        Div(id="main", cls="flex-1 h-svh flex flex-col bg-white overflow-hidden md:border-l")(content),
+        Div(id="main", cls="flex-1 flex flex-col bg-white overflow-hidden md:border-l")(content),
         # mobile version of the sidebar
         # based on the approach from https://dev.to/seppegadeyne/crafting-a-mobile-menu-with-tailwind-css-without-javascript-1814
         Label(fr='mobile-menu', cls='relative z-40 cursor-pointer')(
@@ -525,15 +528,15 @@ def channel(req: Request, cid: int):
     channel_name = channel.name if not channel.is_direct else channel_members(where=f"channel={cid} and member!={m.id}")[0].name
     ping_cmd = { "command": "ping", "d": { "cid": cid }, "auth": { "mid": m.id } }
 
-    convo = Div(cls="hidden", hx_trigger=f"load, every {settings.ping_interval_in_seconds}s", hx_vals=f'{json.dumps(ping_cmd)}', **{"ws_send": "true"}), Div(cls='border-b flex px-6 py-2 items-center flex-none')(
+    convo = Div(cls="hidden", hx_trigger=f"load, every {settings.ping_interval_in_seconds}s", hx_vals=f'{json.dumps(ping_cmd)}', **{"ws_send": "true"}), Div(cls='border-b flex px-6 py-2 items-center flex-none', style="position: fixed; width: 100%; background-color: white;")(
         Div(cls='flex flex-row items-center')(
             Button(variant="ghost", **{"onclick": "document.getElementById('mobile-menu').click()"})(I_ARROW_LEFT(cls="h-6 w-6")),
             H3(cls='text-grey-darkest font-extrabold')(f"#{channel_name}")
         ),
-    ), Div(id=msgs_id, cls='scroller px-6 py-4 flex-1 flex flex-col-reverse overflow-y-scroll')(
+    ), Div(id=msgs_id, cls='scroller px-6 py-4 flex-1 flex flex-col-reverse overflow-y-scroll', style="padding-top: 60px; padding-bottom: 68px;")(
         # lazy load first batch of messages
         Div(hx_trigger="load", hx_get=f"/c/messages/{cid}", hx_swap="outerHTML"),
-    ), Div(cls='pb-6 px-4 flex-none')(
+    ), Div(cls='pb-6 px-4 flex-none', style="position: fixed; bottom: 0; width: 100%; background-color: white;")(
         Div(cls='flex rounded-lg border-2 border-grey overflow-hidden')(
             Span(cls='text-3xl text-grey border-r-2 border-grey p-2')(I_PLUS),
             Form(id=frm_id, cls="w-full", hx_post="/messages/send", hx_target=f"#{msgs_id}", hx_swap="afterbegin",
