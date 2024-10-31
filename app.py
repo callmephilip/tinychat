@@ -427,7 +427,7 @@ def Sidebar(m: Member, w: Workspace, channel: Channel, is_mobile: bool):
             Div(cls="px-3 py-2 border-b")(w),
             ListOfChannelsForMember(member=m, current_channel=channel),
             # profile info
-            Div(cls='flex items-center px-4')(
+            Div(cls='flex items-center px-4 fixed', style="bottom: 25px;")(
                 Img(src=m.image_url, cls='w-10 h-10 mr-3'),
                 Div(cls='text-sm')(
                     Div(m.name, cls='font-bold'),
@@ -529,7 +529,7 @@ def channel(req: Request, cid: int):
 
     convo = [
         Div(cls="hidden", hx_trigger=f"load, every {settings.ping_interval_in_seconds}s", hx_vals=f'{json.dumps(ping_cmd)}', **{"ws_send": "true"}), 
-        Div(cls='border-b flex px-6 py-2 items-center flex-none', style="position: fixed; width: 100%; background-color: white;" if is_mobile else "")(
+        Div(cls='border-b flex md:px-6 py-2 items-center flex-none', style="position: fixed; width: 100%; background-color: white;" if is_mobile else "")(
             Div(cls='flex flex-row items-center')(
                 Button(variant="ghost", **{"onclick": "document.getElementById('mobile-menu').click()"})(I_ARROW_LEFT(cls="h-6 w-6")) if is_mobile else None,
                 H3(cls='text-grey-darkest font-extrabold')(f"#{channel_name}")
