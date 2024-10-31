@@ -47,8 +47,6 @@ I_ARROW_LEFT = build_icon("<path d=\"m12 19-7-7 7-7\"></path><path d=\"M19 12H5\
 # re https://www.creative-tim.com/twcomponents/component/slack-clone-1
 # re https://systemdesign.one/slack-architecture/
 
-# TODO: fix mobile layout
-# TODO: pretty message timestamps
 # TODO: figure out if there is a way to simplify some of the queries using triggers and views instead
 # TODO: fix layout
 # TODO: figure out socket authentication
@@ -80,6 +78,7 @@ app = FastHTMLWithLiveReload(debug=True, default_hdrs=False, hdrs=[
     htmxsrc, fhjsscr, charset,
     Meta(name="viewport", content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"),
     ShadHead(tw_cdn=True),
+    Script(src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"),
     Style("""  
         .messages-loading.htmx-request {
           padding: 10px;
@@ -399,7 +398,7 @@ def __ft__(self: ChannelMessageWCtx):
         Div(cls='flex-1 overflow-hidden')(
             Div(
                 Span(f"{self.u_name}", cls='font-bold'),
-                Span(self.created_at, cls='text-grey text-xs')
+                Span(cls='pl-2 text-grey text-xs', **{ "x-text": f"Intl.DateTimeFormat(navigator.language, {{ month: 'long', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false  }}).format(new Date({self.created_at}))" })
             ),
             P(self.message, cls='text-black leading-normal')
         )
