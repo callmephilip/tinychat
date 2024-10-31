@@ -1,4 +1,5 @@
 import logging, json, time, dataclasses, typing, hashlib, urllib, base64, random, threading, uvicorn, contextlib, user_agents
+import urllib.parse
 from lorem_text import lorem
 from fasthtml.common import *
 from fasthtml.core import htmxsrc, fhjsscr, charset
@@ -93,9 +94,7 @@ rt = app.route
 logging.basicConfig(format="%(asctime)s - %(message)s",datefmt="🧵 %d-%b-%y %H:%M:%S",level=logging.DEBUG,handlers=[logging.StreamHandler()])
 logger = logging.getLogger(__name__)
 
-def get_image_url(email: str, s=250, d="/default.jpg") -> str:
-    email_hash, query_params = hashlib.sha256(email.lower().encode('utf-8')).hexdigest(), urllib.parse.urlencode({'d': d, 's': str(s)})
-    return f"https://www.gravatar.com/avatar/{email_hash}?{query_params}"
+def get_image_url(name: str) -> str: return f"https://ui-avatars.com/api/?name={urllib.parse.quote(name)}&background=random&size=256"
 
 # socket connections socket_id -> send
 connections: Dict[str, typing.Awaitable] = {}
@@ -115,7 +114,8 @@ settings = Settings()
 class TsRec: created_at: int = dataclasses.field(default_factory=get_ts)
 
 @dataclass(kw_only=True)
-class User(TsRec): id: int; name: str; email: str; image_url: str; is_account_enabled: bool = True
+class User(TsRec): id: int; name: str; image_url: str; is_account_enabled: bool = True
+
 @dataclass(kw_only=True)
 class Workspace(TsRec): id: int; name: str
 @dataclass(kw_only=True)
@@ -349,7 +349,7 @@ def setup_database(test=False):
 
     # add test data if in test mode
     if test:
-        u = users.insert(User(name="Phil", email="phil@tc.com"))
+        u = users.insert(User(name="Phil"))
         member = members.insert(Member(user_id=u.id, workspace_id=workspaces()[0].id))
         for channel in channels(): channel_members.insert(ChannelMember(channel=channel.id, member=member.id))
         ts, target_channel = get_ts(), channels()[0]
@@ -409,7 +409,7 @@ def __ft__(self: ListOfChannelsForMember):
     return Div(id="channels", hx_swap_oob="true")(
         Div(cls="px-3 py-2")(
             H2(cls="mb-2 px-4 text-lg font-semibold tracking-tight")("Groups"),
-            ScrollArea(*self.group_channels, cls="h-[300px] px-1")
+            Div(*self.group_channels, cls=" px-1")
         ),
         Div(cls="px-3 py-2")(
             H2(cls="mb-2 px-4 text-lg font-semibold tracking-tight")("DMs"),
@@ -430,8 +430,8 @@ def Sidebar(m: Member, w: Workspace, channel: Channel, is_mobile: bool):
             Div(cls='flex items-center px-4')(
                 Img(src=m.image_url, cls='w-10 h-10 mr-3'),
                 Div(cls='text-sm')(
-                    Div(f"{m.name} - {m.id}", cls='font-bold'),
-                    Div('Online', cls='text-xs text-green-400')
+                    Div(m.name, cls='font-bold'),
+                    Div('Online', cls='text-xs font-bold text-green-400')
                 )
             )
         )
@@ -463,23 +463,21 @@ def Layout(*content, m: Member, w: Workspace, channel: Channel, is_mobile: bool)
     )
 
 @dataclass
-class Login: name:str; email:str
+class Login: name:str
 
 @rt("/login")
 def get():
     frm = Form(action='/login', method='post')(
         Input(id='name', placeholder='Name'),
-        Input(id='email', type='email', placeholder='Email'),
         Button('login'),
     )
     return Titled("Login", frm)
 
 @rt("/login")
 def post(login:Login, sess):
-    if not login.name or not login.email: return login_redir
-    if len(users(where=f"email='{login.email}'")) != 0: raise HTTPException(400, "User with this email already exists")
+    if not login.name: return login_redir
 
-    user, workspace = users.insert(User(name=login.name, email=login.email, image_url=get_image_url(login.email))), workspaces()[0]
+    user, workspace = users.insert(User(name=login.name, image_url=get_image_url(login.name))), workspaces()[0]
     # automatically associate the user with the first workspace + default group channels
     member = members.insert(Member(user_id=user.id, workspace_id=workspace.id))
     default_channels = ",".join(map(lambda c: f"'{c}'", settings.default_channels))
@@ -672,7 +670,7 @@ try:
         assert response.status_code == 303
         assert response.headers['location'] == '/login'
 
-        response = client.post('/login', data={"name": "Philip", "email": "philip@thebakery.io"})
+        response = client.post('/login', data={"name": "Philip" })
         
         assert len(users()) == 2
         assert len(members()) == 2
@@ -682,7 +680,7 @@ try:
         assert response.headers['location'] == '/'
 
     def test_message_seen(client):
-        u1, u2, workspace = users.insert(User(name="Philip", email="p@g.com")), users.insert(User(name="John", email="j@g.com")), workspaces()[0]
+        u1, u2, workspace = users.insert(User(name="Philip")), users.insert(User(name="John")), workspaces()[0]
         channel = channels.insert(Channel(name=f"{random.randint(1, 1000)}", workspace_id=workspace.id))
         m1, m2 = members.insert(Member(user_id=u1.id, workspace_id=workspace.id)), members.insert(Member(user_id=u2.id, workspace_id=workspace.id))
         cm1, cm2 = channel_members.insert(ChannelMember(channel=channel.id, member=m1.id)), channel_members.insert(ChannelMember(channel=channel.id, member=m2.id))
@@ -716,9 +714,9 @@ try:
         assert c4m1.has_unread_messages is False
 
         # direct messages: steven messages philip
-        client.post('/login', data={"name": "Steven", "email": "steve@thebakery.io"})
+        client.post('/login', data={"name": "Steven"})
 
-        u3 = users(where="email='steve@thebakery.io'")[0]
+        u3 = users(where="name='Steven'")[0]
         m3 = members(where=f"user_id={u3.id}")[0]
 
         client.get(f'/direct/{m1.id}')
@@ -776,16 +774,16 @@ try:
 
 
     def test_direct_channel_setup(client):
-        u1, workspace = users.insert(User(name="Philip", email="p@g.com")), workspaces()[0]
+        u1, workspace = users.insert(User(name="Philip")), workspaces()[0]
         m1 = members.insert(Member(user_id=u1.id, workspace_id=workspace.id))
 
         assert len(channels()) == 2
         assert len(channels(where="is_direct=1")) == 0
 
         # Bob registers (and logs in)
-        client.post('/login', data={"name": "Bob", "email": "bob@thebakery.io"})
+        client.post('/login', data={"name": "Bob"})
 
-        u2 = users(where="email='bob@thebakery.io'")[0]
+        u2 = users(where="name='Bob'")[0]
         m2 = members(where=f"user_id={u2.id}")[0]
 
         # Bob wants to message Philip
@@ -815,9 +813,9 @@ try:
 
         # philip signs up and logs in
         
-        client.post('/login', data={"name": "Philip", "email": "philip@thebakery.io"})
+        client.post('/login', data={"name": "Philip"})
         
-        u1 = users(where="email='philip@thebakery.io'")[0]
+        u1 = users(where="name='Philip'")[0]
         m1 = members(where=f"user_id={u1.id}")[0]
 
         c4m = ListOfChannelsForMember(member=m1, current_channel=channels()[0])
@@ -830,9 +828,9 @@ try:
 
         # bob signs up and logs in
 
-        client.post('/login', data={"name": "Bob", "email": "bob@thebakery.io"})
+        client.post('/login', data={"name": "Bob"})
 
-        u2 = users(where="email='bob@thebakery.io'")[0]
+        u2 = users(where="name='Bob'")[0]
         m2 = members(where=f"user_id={u2.id}")[0]
 
         c4m = ListOfChannelsForMember(member=m2, current_channel=channels()[0])
@@ -857,9 +855,9 @@ try:
 
         # steven signs up and logs in
 
-        client.post('/login', data={"name": "Steven", "email": "steve@thebakery.io"})
+        client.post('/login', data={"name": "Steven"})
 
-        u3 = users(where="email='steve@thebakery.io'")[0]
+        u3 = users(where="name='Steven'")[0]
         m3 = members(where=f"user_id={u3.id}")[0]
 
         c4m = ListOfChannelsForMember(member=m3, current_channel=channels()[0])
@@ -891,7 +889,7 @@ try:
         cursor = ChannelMessageWCtx.encode_cursor(t, "prev")
         assert ChannelMessageWCtx.decode_cursor(cursor) == (t, "prev")
 
-        u, workspace, channel = users.insert(User(name="Philip", email="p@g.com")), workspaces()[0], channels()[0]
+        u, workspace, channel = users.insert(User(name="Philip")), workspaces()[0], channels()[0]
         m  = members.insert(Member(user_id=u.id, workspace_id=workspace.id))
         channel_members.insert(ChannelMember(channel=channel.id, member=m.id))
 
@@ -944,7 +942,6 @@ try:
         assert page.url.endswith("/login")
 
         page.get_by_placeholder("Name").fill(f"{random.randint(0, 1000000)}")
-        page.get_by_placeholder("Email").fill(f"{random.randint(0, 1000000)}@tc.com")
         page.get_by_role("button", name="login").click()
 
         # make sure we end up on the main channel page
@@ -989,14 +986,12 @@ try:
 
         bob_page.goto(base_url)
         bob_page.get_by_placeholder("Name").fill("Bob")
-        bob_page.get_by_placeholder("Email").fill("bob@tc.com")
         bob_page.get_by_role("button", name="login").click()
         
         bob_page.wait_for_url("**/c/1") 
         
         steven_page.goto(f"{base_url}")
         steven_page.get_by_placeholder("Name").fill("Steven")
-        steven_page.get_by_placeholder("Email").fill("steven@tc.com")
         steven_page.get_by_role("button", name="login").click()
         
         steven_page.wait_for_load_state()
