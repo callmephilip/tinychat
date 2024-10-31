@@ -371,7 +371,7 @@ async def ws_send_to_member(member_id: int, data):
 ## UI
 
 @patch
-def __ft__(self: Workspace): return H1(cls="text-l font-bold pb-2")(f'👨‍🏭 {self.name}')
+def __ft__(self: Workspace): return H1(cls="text-l font-bold")(f'👨‍🏭 {self.name}')
 
 @patch
 def __ft__(self: User): return Div('👤', self.name)
@@ -423,9 +423,9 @@ def __ft__(self: ListOfChannelsForMember):
 def Sidebar(m: Member, w: Workspace, channel: Channel, is_mobile: bool):
     attrs = {"hx-on::after-request": "setTimeout(() => { document.querySelector('#mobile-menu').click(); }, 300)"} if is_mobile else {}
     return Div(cls="flex-none w-64 pb-6 block pb-12 overflow-hidden", **attrs)(
-        Div(cls="space-y-4 py-4")(
+        Div(cls="space-y-4")(
             # workspace info
-            Div(cls="px-3 py-2 border-b", style="position: fixed; width: 100%; background-color: white;")(w),
+            Div(cls="px-3 py-2 border-b")(w),
             ListOfChannelsForMember(member=m, current_channel=channel),
             # profile info
             Div(cls='flex items-center px-4')(
@@ -438,7 +438,7 @@ def Sidebar(m: Member, w: Workspace, channel: Channel, is_mobile: bool):
         )
     )
 
-def Layout(content: FT, m: Member, w: Workspace, channel: Channel, is_mobile: bool) -> FT:
+def Layout(*content, m: Member, w: Workspace, channel: Channel, is_mobile: bool) -> FT:
     return Body(cls="font-sans antialiased h-dvh flex bg-background overflow-hidden", hx_ext='ws', ws_connect=f'/ws?mid={m.id}')(
         # sidebar
         Sidebar(m, w, channel, is_mobile) if not is_mobile else None,
@@ -528,26 +528,32 @@ def channel(req: Request, cid: int):
     channel_name = channel.name if not channel.is_direct else channel_members(where=f"channel={cid} and member!={m.id}")[0].name
     ping_cmd = { "command": "ping", "d": { "cid": cid }, "auth": { "mid": m.id } }
 
-    convo = Div(cls="hidden", hx_trigger=f"load, every {settings.ping_interval_in_seconds}s", hx_vals=f'{json.dumps(ping_cmd)}', **{"ws_send": "true"}), Div(cls='border-b flex px-6 py-2 items-center flex-none', style="position: fixed; width: 100%; background-color: white;")(
-        Div(cls='flex flex-row items-center')(
-            Button(variant="ghost", **{"onclick": "document.getElementById('mobile-menu').click()"})(I_ARROW_LEFT(cls="h-6 w-6")),
-            H3(cls='text-grey-darkest font-extrabold')(f"#{channel_name}")
-        ),
-    ), Div(id=msgs_id, cls='scroller px-6 py-4 flex-1 flex flex-col-reverse overflow-y-scroll', style="padding-top: 60px; padding-bottom: 68px;")(
-        # lazy load first batch of messages
-        Div(hx_trigger="load", hx_get=f"/c/messages/{cid}", hx_swap="outerHTML"),
-    ), Div(cls='pb-6 px-4 flex-none', style="position: fixed; bottom: 0; width: 100%; background-color: white;")(
-        Div(cls='flex rounded-lg border-2 border-grey overflow-hidden')(
-            Span(cls='text-3xl text-grey border-r-2 border-grey p-2')(I_PLUS),
-            Form(id=frm_id, cls="w-full", hx_post="/messages/send", hx_target=f"#{msgs_id}", hx_swap="afterbegin",
-                 **{ "hx-on::after-request": f"""document.querySelector("#{frm_id}").reset(); document.getElementById("{msgs_id}").scrollTop = document.getElementById("{msgs_id}").scrollHeight;""" }
-            )(
-                Input(id='msg', style="border:none; border-radius: 0;", placeholder=f"Message {f'#{channel_name}' if not channel.is_direct else channel_name}"),
-                Input(name='cid', type="hidden", value=cid)
+    convo = [
+        Div(cls="hidden", hx_trigger=f"load, every {settings.ping_interval_in_seconds}s", hx_vals=f'{json.dumps(ping_cmd)}', **{"ws_send": "true"}), 
+        Div(cls='border-b flex px-6 py-2 items-center flex-none', style="position: fixed; width: 100%; background-color: white;" if is_mobile else "")(
+            Div(cls='flex flex-row items-center')(
+                Button(variant="ghost", **{"onclick": "document.getElementById('mobile-menu').click()"})(I_ARROW_LEFT(cls="h-6 w-6")) if is_mobile else None,
+                H3(cls='text-grey-darkest font-extrabold')(f"#{channel_name}")
             ),
+        ),
+        Div(id=msgs_id, cls='scroller px-6 py-4 flex-1 flex flex-col-reverse overflow-y-scroll', style="padding-top: 60px; padding-bottom: 68px;" if is_mobile else "")(
+            # lazy load first batch of messages
+            Div(hx_trigger="load", hx_get=f"/c/messages/{cid}", hx_swap="outerHTML"),
+        ), 
+        Div(cls='pb-6 px-4 flex-none', style="position: fixed; bottom: 0; width: 100%; background-color: white;" if is_mobile else "")(
+            Div(cls='flex rounded-lg border-2 border-grey overflow-hidden')(
+                Span(cls='text-3xl text-grey border-r-2 border-grey p-2')(I_PLUS),
+                Form(id=frm_id, cls="w-full", hx_post="/messages/send", hx_target=f"#{msgs_id}", hx_swap="afterbegin",
+                    **{ "hx-on::after-request": f"""document.querySelector("#{frm_id}").reset(); document.getElementById("{msgs_id}").scrollTop = document.getElementById("{msgs_id}").scrollHeight;""" }
+                )(
+                    Input(id='msg', style="border:none; border-radius: 0;", placeholder=f"Message {f'#{channel_name}' if not channel.is_direct else channel_name}"),
+                    Input(name='cid', type="hidden", value=cid)
+                ),
+            )
         )
-    )
-    return convo if req.headers.get('Hx-Request') else Layout(convo, m, w, channel, is_mobile)
+    ]
+
+    return convo if req.headers.get('Hx-Request') else Layout(*convo, m=m, w=w, channel=channel, is_mobile=is_mobile)
 
 @rt('/direct/{to_m}')
 def direct(req: Request, to_m: int):
