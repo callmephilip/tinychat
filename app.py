@@ -6,6 +6,7 @@ from fasthtml.core import htmxsrc, fhjsscr, charset
 from fasthtml.svg import Svg
 from shad4fast import *
 from shad4fast.components.button import btn_variants, btn_base_cls, btn_sizes
+from lucide_fasthtml import Lucide
 from tractor import connect_tractor
 
 try:
@@ -52,6 +53,8 @@ I_USER = build_icon("<path d=\"M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2\"></pat
 I_USERS = build_icon("<path d=\"M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2\"></path><circle cx=\"9\" cy=\"7\" r=\"4\"></circle><path d=\"M22 21v-2a4 4 0 0 0-3-3.87\"></path><path d=\"M16 3.13a4 4 0 0 1 0 7.75\"></path>")
 I_PLUS = NotStr("""<svg class="fill-current h-6 w-6 block" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20"><path d="M16 10c0 .553-.048 1-.601 1H11v4.399c0 .552-.447.601-1 .601-.553 0-1-.049-1-.601V11H4.601C4.049 11 4 10.553 4 10c0-.553.049-1 .601-1H9V4.601C9 4.048 9.447 4 10 4c.553 0 1 .048 1 .601V9h4.399c.553 0 .601.447.601 1z"></path></svg>""")
 I_ARROW_LEFT = build_icon("<path d=\"m12 19-7-7 7-7\"></path><path d=\"M19 12H5\"></path>")
+I_GH = build_icon("<path d=\"M15 22v-4a4.8 4.8 0 0 0-1-3.5c3 0 6-2 6-5.5.08-1.25-.27-2.48-1-3.5.28-1.15.28-2.35 0-3.5 0 0-1 0-3 1.5-2.64-.5-5.36-.5-8 0C6 2 5 2 5 2c-.3 1.15-.3 2.35 0 3.5A5.403 5.403 0 0 0 4 9c0 3.5 3 5.5 6 5.5-.39.49-.68 1.05-.85 1.65-.17.6-.22 1.23-.15 1.85v4\"></path><path d=\"M9 18c-4.51 2-5-2-7-2\"></path>")
+I_PLAY = build_icon("<polygon points=\"6 3 20 12 6 21 6 3\"></polygon>")
 
 # re https://www.creative-tim.com/twcomponents/component/slack-clone-1
 # re https://systemdesign.one/slack-architecture/
@@ -443,6 +446,14 @@ def Sidebar(m: Member, w: Workspace, channel: Channel, is_mobile: bool):
         )   
     )
 
+def LandingLayout(*content) -> FT:
+    return Body(cls="font-sans antialiased h-dvh flex bg-background overflow-hidden")(
+        Div(cls='container relative flex-col h-full items-center justify-center md:grid lg:max-w-none lg:grid-cols-1 lg:px-0')(
+            Div(cls='absolute left-4 top-4 z-20 flex items-center text-lg font-medium')(A(href="/")("👨‍🏭 tinychat")),
+            Div(cls='mx-auto my-24 flex w-full flex-col justify-center space-y-6 sm:w-[350px]')(content)
+        )
+    )
+
 def Layout(*content, m: Member, w: Workspace, channel: Channel, is_mobile: bool) -> FT:
     return Body(cls="font-sans antialiased h-dvh flex bg-background overflow-hidden", hx_ext='ws', ws_connect=f'/ws?mid={m.id}')(
         # sidebar
@@ -469,18 +480,24 @@ def Layout(*content, m: Member, w: Workspace, channel: Channel, is_mobile: bool)
     )
 
 @rt("/")
-def landing(): return Strong("Welcome!")
+def landing():
+    return LandingLayout(
+        Div(cls='flex flex-col space-y-2 text-center')(
+            H1("Welcome to tinychat", cls='text-2xl font-semibold tracking-tight'),
+            P("Chat so small it fits in 1 python file"),
+            P("Try it, fork it, make it yours.", cls='text-sm text-muted-foreground')
+        ),
+        Div(cls="grid grid-cols-2 gap-6")(
+            A(href="/login", cls=clsx(btn_base_cls, btn_variants["outline"], btn_sizes["default"]))(I_PLAY(cls="mr-2 h-4 w-4"),"Try it"),
+            A(href="https://github.com/callmephilip/tinychat", cls=clsx(btn_base_cls, btn_variants["outline"], btn_sizes["default"]))(I_GH(cls="mr-2 h-4 w-4"),"Github")
+        )
+    )
 
 @dataclass
 class Login: name:str
 
 @rt("/login")
-def get():
-    frm = Form(action='/login', method='post')(
-        Input(id='name', placeholder='Name'),
-        Button('login'),
-    )
-    return Titled("Login", frm)
+def get(): return LandingLayout(Form(action='/login', method='post')(Div(cls="flex")(Input(id='name', placeholder='Name'), Button(cls="ml-4")('Log in'))))
 
 @rt("/login")
 def post(login:Login, sess):
@@ -887,7 +904,7 @@ try:
         page.goto("/login")
 
         page.get_by_placeholder("Name").fill(f"{random.randint(0, 1000000)}")
-        page.get_by_role("button", name="login").click()
+        page.get_by_role("button", name="Log in").click()
 
         # make sure we end up on the main channel page
         assert page.url.endswith("/c/1")
@@ -945,13 +962,13 @@ try:
 
         bob_page.goto(f"{base_url}/login")
         bob_page.get_by_placeholder("Name").fill("Bob")
-        bob_page.get_by_role("button", name="login").click()
+        bob_page.get_by_role("button", name="Log in").click()
         
         bob_page.wait_for_url("**/c/1") 
         
         steven_page.goto(f"{base_url}/login")
         steven_page.get_by_placeholder("Name").fill("Steven")
-        steven_page.get_by_role("button", name="login").click()
+        steven_page.get_by_role("button", name="Log in").click()
         
         steven_page.wait_for_load_state()
 
@@ -1063,7 +1080,7 @@ try:
         page = session.new_page()
         page.goto(f"{base_url}/login")
         page.get_by_placeholder("Name").fill("Steven")
-        page.get_by_role("button", name="login").click()
+        page.get_by_role("button", name="Log in").click()
 
         page.wait_for_url("**/c/1")
 
