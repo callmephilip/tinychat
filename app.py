@@ -13,7 +13,12 @@ try:
     from playwright.sync_api import Page, Playwright, expect
 except ImportError: pass
 
+# TODO: sanitize inputs
+# TODO: fix tests
 # TODO: people can log out
+# TODO: mobile tests
+# TODO: get server stats
+# TODO: autofocus on input when changing channels
 # TODO: figure out if there is a way to simplify some of the queries using triggers and views instead
 # TODO: figure out socket authentication
 # TODO: support markdown in messages?
@@ -73,14 +78,14 @@ def check_auth(req, sess):
 def get_ts() -> int: return int(time.time() * 1000)
 def clsx(*args): return " ".join([arg for arg in args if arg])
 
-bware = Beforeware(check_auth, skip=[r'/favicon\.ico', r'/static/.*', r'.*\.css', '/login', '/healthcheck'])
+bware = Beforeware(check_auth, skip=[r'/favicon\.ico', r'/static/.*', r'.*\.css', '/', '/login', '/healthcheck'])
 
 App = FastHTMLWithLiveReload if os.environ.get("LIVE_RELOAD", False) else FastHTML
 app = App(debug=True, default_hdrs=False, hdrs=[
     htmxsrc, fhjsscr, charset,
     Meta(name="viewport", content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"),
     ShadHead(tw_cdn=True),
-    Script(src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"),
+    Script(src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js", defer=True),
     Style("""  
         .messages-loading.htmx-request {
           padding: 10px;
@@ -428,14 +433,20 @@ def Sidebar(m: Member, w: Workspace, channel: Channel, is_mobile: bool):
             Div(cls="px-3 py-2 border-b")(w),
             ListOfChannelsForMember(member=m, current_channel=channel),
             # profile info
-            Div(cls='flex items-center px-4 fixed', style="bottom: 25px;")(
-                Img(src=m.image_url, cls='w-10 h-10 mr-3'),
-                Div(cls='text-sm')(
-                    Div(m.name, cls='font-bold'),
-                    Div('Online', cls='text-xs font-bold text-green-400')
+            Sheet(
+                Div(cls="h-full")(
+                    A(href=f"/logout", **{ "data-testid": "logout" }, cls=clsx(btn_sizes["sm"], btn_base_cls, btn_variants["default"]))("Logout")
+                ),
+                side="bottom",
+                trigger=Button(cls='flex items-center px-4 mx-4 fixed bottom-6', variant="ghost", data_ref="sheet-trigger", **{ "data-testid": "profile-menu" })(
+                    Img(src=m.image_url, cls='w-10 h-10 mr-3'),
+                    Div(cls='text-sm')(
+                        Div(m.name, cls='font-bold'),
+                        Div('Online', cls='text-xs font-bold text-green-400')
+                    )
                 )
             )
-        )
+        )   
     )
 
 def Layout(*content, m: Member, w: Workspace, channel: Channel, is_mobile: bool) -> FT:
@@ -463,6 +474,9 @@ def Layout(*content, m: Member, w: Workspace, channel: Channel, is_mobile: bool)
         """),
     )
 
+@rt("/")
+def landing(): return Strong("Welcome!")
+
 @dataclass
 class Login: name:str
 
@@ -485,11 +499,12 @@ def post(login:Login, sess):
     for channel in channels(where=f"workspace_id={workspace.id} and name in ({default_channels})"): channel_members.insert(ChannelMember(channel=channel.id, member=member.id))
     sess['mid'], sess['wid'] = member.id, workspace.id
 
-    return RedirectResponse('/', status_code=303)
+    return Redirect(f"/c/{channels()[0].id}")
 
-
-@rt('/')
-def home(): return Redirect(f"/c/{channels()[0].id}")
+@app.get("/logout")
+def logout(sess):
+    sess.pop("mid", None), sess.pop("wid", None)    
+    return RedirectResponse("/", status_code=303)
 
 @rt("/healthcheck")
 def get(): return JSONResponse({"status": "ok"})
@@ -668,9 +683,9 @@ try:
 
         response: Response = client.get('/')
 
-        assert response.status_code == 303
-        assert response.headers['location'] == '/login'
-
+        assert response.status_code == 200
+        
+        response = client.get('/login')
         response = client.post('/login', data={"name": "Philip" })
         
         assert len(users()) == 2
@@ -678,7 +693,7 @@ try:
         assert len(channel_members()) == 4
 
         assert response.status_code == 303
-        assert response.headers['location'] == '/'
+        assert response.headers['location'] == '/c/1'
 
     def test_message_seen(client):
         u1, u2, workspace = users.insert(User(name="Philip")), users.insert(User(name="John")), workspaces()[0]
@@ -938,9 +953,8 @@ try:
         # assert msg_batch[0].message == "hello 1"
 
     def test_happy_flow(page: Page):
-        page.goto("/")
-
-        assert page.url.endswith("/login")
+        page.set_default_timeout(5000)
+        page.goto("/login")
 
         page.get_by_placeholder("Name").fill(f"{random.randint(0, 1000000)}")
         page.get_by_role("button", name="login").click()
@@ -975,23 +989,29 @@ try:
 
         page.locator(".chat-message").locator("p").inner_html().startswith("hello world")
 
+        # logout
+        page.get_by_test_id("profile-menu").click()
+        page.get_by_test_id("logout").click()
+
+        page.wait_for_url("**/")
+
     def test_messaging_interaction(playwright: Playwright, page: Page):
         base_url = "http://localhost:5002"
         browser = playwright.chromium.launch()
         
-        steven_session = browser.new_context()
-        bob_session = browser.new_context()
+        steven_session, bob_session = browser.new_context(), browser.new_context()
+        for s in [steven_session, bob_session]: s.set_default_timeout(5000)
 
         steven_page = steven_session.new_page()
         bob_page = bob_session.new_page()
 
-        bob_page.goto(base_url)
+        bob_page.goto(f"{base_url}/login")
         bob_page.get_by_placeholder("Name").fill("Bob")
         bob_page.get_by_role("button", name="login").click()
         
         bob_page.wait_for_url("**/c/1") 
         
-        steven_page.goto(f"{base_url}")
+        steven_page.goto(f"{base_url}/login")
         steven_page.get_by_placeholder("Name").fill("Steven")
         steven_page.get_by_role("button", name="login").click()
         
