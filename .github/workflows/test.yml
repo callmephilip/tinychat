@@ -4,6 +4,8 @@ on:
   pull_request:
     branches:
       - main
+  push:
+    branches: [main]
 jobs:
   run_automatic_tests:
     runs-on: ubuntu-latest
