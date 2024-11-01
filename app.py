@@ -447,7 +447,7 @@ def Sidebar(m: Member, w: Workspace, channel: Channel, is_mobile: bool):
     )
 
 def LandingLayout(*content) -> FT:
-    return Body(cls="font-sans antialiased h-dvh flex bg-background overflow-hidden")(
+    return Title("tinychat"), Body(cls="font-sans antialiased h-dvh flex bg-background overflow-hidden")(
         Div(cls='container relative flex-col h-full items-center justify-center md:grid lg:max-w-none lg:grid-cols-1 lg:px-0')(
             Div(cls='absolute left-4 top-4 z-20 flex items-center text-lg font-medium')(A(href="/")("👨‍🏭 tinychat")),
             Div(cls='mx-auto my-24 flex w-full flex-col justify-center space-y-6 sm:w-[350px]')(content)
@@ -455,7 +455,7 @@ def LandingLayout(*content) -> FT:
     )
 
 def Layout(*content, m: Member, w: Workspace, channel: Channel, is_mobile: bool) -> FT:
-    return Body(cls="font-sans antialiased h-dvh flex bg-background overflow-hidden", hx_ext='ws', ws_connect=f'/ws?mid={m.id}')(
+    return Title("tinychat"), Body(cls="font-sans antialiased h-dvh flex bg-background overflow-hidden", hx_ext='ws', ws_connect=f'/ws?mid={m.id}')(
         # sidebar
         Sidebar(m, w, channel, is_mobile) if not is_mobile else None,
         # main content
