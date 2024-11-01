@@ -471,10 +471,10 @@ def Sidebar(m: Member, w: Workspace, channel: Channel, is_mobile: bool):
     )
 
 def LandingLayout(*content) -> FT:
-    return Title("tinychat"), Body(cls="font-sans antialiased h-dvh flex bg-background overflow-hidden")(
+    return Title("tinychat"), Body(cls="font-sans antialiased h-dvh flex bg-background")(
         Div(cls='container relative flex-col h-full items-center justify-center md:grid lg:max-w-none lg:grid-cols-1 lg:px-0')(
             Div(cls='absolute left-4 top-4 z-20 flex items-center text-lg font-medium')(A(href="/")("👨‍🏭 tinychat")),
-            Div(cls='mx-auto my-24 flex w-full flex-col justify-center space-y-6 sm:w-[350px]')(content)
+            content
         )
     )
 
@@ -512,22 +512,38 @@ def Layout(*content, m: Member, w: Workspace, channel: Channel, is_mobile: bool)
 # 👉 Routing
 # ================================================================================================================================================================================================================================
 
+@rt("/static/{fname:path}.{ext:static}")
+def get(fname: str, ext: str): return FileResponse(f"./{fname}.{ext}")
+
 @rt("/")
 def landing():
     return LandingLayout(
-        Div(cls='flex flex-col space-y-2 text-center')(
-            H1("Welcome to tinychat", cls='text-2xl font-semibold tracking-tight'),
-            P("Chat so small it fits in 1 python file"),
-            P("Try it, fork it, make it yours.", cls='text-sm text-muted-foreground')
+        Div(cls='mx-auto my-24 flex w-full flex-col justify-center space-y-6 sm:w-[350px]')(
+            Div(cls="flex flex-col gap-4")(
+                Div(cls='flex flex-col space-y-2 text-center')(
+                    H1("Welcome to tinychat", cls='text-2xl font-semibold tracking-tight'),
+                    P("Chat so small it fits in 1 python file"),
+                    P("Try it, fork it, make it yours.", cls='text-sm text-muted-foreground')
+                ),
+                Div(cls="grid grid-cols-2 gap-6")(
+                    A(href="/login", cls=clsx(btn_base_cls, btn_variants["outline"], btn_sizes["default"]))(I_PLAY(cls="mr-2 h-4 w-4"),"Try it"),
+                    A(href="https://github.com/callmephilip/tinychat", cls=clsx(btn_base_cls, btn_variants["outline"], btn_sizes["default"]))(I_GH(cls="mr-2 h-4 w-4"),"Github")
+                )
+            )
         ),
-        Div(cls="grid grid-cols-2 gap-6")(
-            A(href="/login", cls=clsx(btn_base_cls, btn_variants["outline"], btn_sizes["default"]))(I_PLAY(cls="mr-2 h-4 w-4"),"Try it"),
-            A(href="https://github.com/callmephilip/tinychat", cls=clsx(btn_base_cls, btn_variants["outline"], btn_sizes["default"]))(I_GH(cls="mr-2 h-4 w-4"),"Github")
-        )
+        Img(cls="hidden md:block w-[80%] mx-auto shadow-xl bg-slate-800", src="/static/desktop.png"),
+        Img(cls="md:hidden mx-auto shadow-xl bg-slate-800", src="/static/mobile.png"),
+        Div(cls="pt-8 md:pt-16")
     )
 
+
 @rt("/login")
-def get(): return LandingLayout(Form(action='/login', method='post')(Div(cls="flex")(Input(id='name', placeholder='Name'), Button(cls="ml-4")('Log in'))))
+def get():
+    return LandingLayout(
+        Div(cls='mx-auto my-24 flex w-full flex-col justify-center space-y-6 sm:w-[350px]')(
+            Form(action='/login', method='post')(Div(cls="flex")(Input(id='name', placeholder='Name'), Button(cls="ml-4")('Log in')))
+        )
+    )
 
 @rt("/login")
 def post(login:Login, sess):
