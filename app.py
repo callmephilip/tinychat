@@ -423,7 +423,7 @@ def __ft__(self: ListOfChannelsForMember):
 ## end of UI
 
 def Sidebar(m: Member, w: Workspace, channel: Channel, is_mobile: bool):
-    attrs = {"hx-on::after-request": "setTimeout(() => { document.querySelector('#mobile-menu').click(); }, 300)"} if is_mobile else {}
+    attrs = { "data-testid": "sidebar", "hx-on::after-request": "setTimeout(() => { document.querySelector('#mobile-menu').click(); }, 300)"} if is_mobile else {}
     return Div(cls="flex-none md:w-64 block overflow-hidden", **attrs)(
         Div(cls="space-y-4")(
             # workspace info
@@ -537,15 +537,15 @@ def list_channel_messages(req: Request, cid: int):
 @rt('/c/{cid}')
 def channel(req: Request, cid: int):
     is_mobile, m, w, frm_id, msgs_id, channel = user_agents.parse(req.headers.get('User-Agent')).is_mobile, req.scope['m'], req.scope['w'], f"f-{cid}", f"channel-{cid}", channels[cid]
-    channel_name = channel.name if not channel.is_direct else channel_members(where=f"channel={cid} and member!={m.id}")[0].name
+    channel_name = f"#{channel.name}" if not channel.is_direct else channel_members(where=f"channel={cid} and member!={m.id}")[0].name
     ping_cmd = { "command": "ping", "d": { "cid": cid }, "auth": { "mid": m.id } }
 
     convo = [
         Div(cls="hidden", hx_trigger=f"load, every {settings.ping_interval_in_seconds}s", hx_vals=f'{json.dumps(ping_cmd)}', **{"ws_send": "true"}), 
         Div(cls='border-b flex md:px-6 py-2 items-center flex-none', style="position: fixed; width: 100%; background-color: white;" if is_mobile else "")(
             Div(cls='flex flex-row items-center')(
-                Button(variant="ghost", **{"onclick": "document.getElementById('mobile-menu').click()"})(I_ARROW_LEFT(cls="h-6 w-6")) if is_mobile else None,
-                H3(cls='text-grey-darkest font-extrabold')(f"#{channel_name}")
+                Button(variant="ghost", **{ "data-testid":"show-mobile-sidebar", "onclick": "document.getElementById('mobile-menu').click()"})(I_ARROW_LEFT(cls="h-6 w-6")) if is_mobile else None,
+                H3(cls='text-grey-darkest font-extrabold')(channel_name)
             ),
         ),
         Div(id=msgs_id, cls='scroller px-6 py-4 flex-1 flex flex-col-reverse overflow-y-scroll', style="padding-top: 60px; padding-bottom: 68px;" if is_mobile else "")(
@@ -558,7 +558,7 @@ def channel(req: Request, cid: int):
                 Form(id=frm_id, cls="w-full", hx_post="/messages/send", hx_target=f"#{msgs_id}", hx_swap="afterbegin",
                     **{ "hx-on::after-request": f"""document.querySelector("#{frm_id}").reset(); document.getElementById("{msgs_id}").scrollTop = document.getElementById("{msgs_id}").scrollHeight;""" }
                 )(
-                    Input(id='msg', autofocus="true", style="border:none; border-radius: 0;", placeholder=f"Message {f'#{channel_name}' if not channel.is_direct else channel_name}"),
+                    Input(id='msg', autofocus="true", style="border:none; border-radius: 0;", placeholder=f"Message {channel_name}"),
                     Input(name='cid', type="hidden", value=cid)
                 ),
             )
@@ -1121,6 +1121,39 @@ try:
         bob_page.wait_for_selector(".chat-message:nth-child(1)")
         assert bob_page.locator(".chat-message").count() == 2
         assert bob_page.locator(".chat-message:nth-child(1)").locator("p").inner_html() == "hey bob"
+
+    def test_mobile(playwright: Playwright):
+        base_url = "http://localhost:5002"
+        browser = playwright.chromium.launch()    
+        session = browser.new_context(**playwright.devices["iPhone 13"])
+
+        page = session.new_page()
+        page.goto(f"{base_url}/login")
+        page.get_by_placeholder("Name").fill("Steven")
+        page.get_by_role("button", name="login").click()
+
+        page.wait_for_url("**/c/1")
+
+        assert page.get_by_placeholder("Message #general").evaluate("node => document.activeElement === node")
+
+        # confirm mobile sidebar toggler is visible
+        expect(page.get_by_test_id("show-mobile-sidebar")).to_be_visible()
+
+        page.get_by_test_id("show-mobile-sidebar").click()
+
+        # navigate to #random
+        page.get_by_test_id("nav-to-channel-2").click()
+
+        page.wait_for_url("**/c/2")
+
+        page.wait_for_timeout(300)
+        assert page.get_by_placeholder("Message #random").evaluate("node => document.activeElement === node")
+
+        # message random
+        page.get_by_placeholder("Message #random").fill("hello world")
+        page.get_by_placeholder("Message #random").press("Enter")
+
+        page.wait_for_selector(".chat-message")
 
 
 except: pass
