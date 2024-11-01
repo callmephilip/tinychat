@@ -3,6 +3,7 @@
 
 > 🚧 This project is in active development. Things might be broken and will likely change.
 
+![Screenshot](./desktop.png)
 
 # Hacking on the app locally
 
