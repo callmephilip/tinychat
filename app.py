@@ -13,12 +13,9 @@ try:
     from playwright.sync_api import Page, Playwright, expect
 except ImportError: pass
 
-# TODO: sanitize inputs
 # TODO: fix tests
-# TODO: people can log out
 # TODO: mobile tests
 # TODO: get server stats
-# TODO: autofocus on input when changing channels
 # TODO: figure out if there is a way to simplify some of the queries using triggers and views instead
 # TODO: figure out socket authentication
 # TODO: support markdown in messages?
@@ -561,7 +558,7 @@ def channel(req: Request, cid: int):
                 Form(id=frm_id, cls="w-full", hx_post="/messages/send", hx_target=f"#{msgs_id}", hx_swap="afterbegin",
                     **{ "hx-on::after-request": f"""document.querySelector("#{frm_id}").reset(); document.getElementById("{msgs_id}").scrollTop = document.getElementById("{msgs_id}").scrollHeight;""" }
                 )(
-                    Input(id='msg', style="border:none; border-radius: 0;", placeholder=f"Message {f'#{channel_name}' if not channel.is_direct else channel_name}"),
+                    Input(id='msg', autofocus="true", style="border:none; border-radius: 0;", placeholder=f"Message {f'#{channel_name}' if not channel.is_direct else channel_name}"),
                     Input(name='cid', type="hidden", value=cid)
                 ),
             )
@@ -962,6 +959,9 @@ try:
         # make sure we end up on the main channel page
         assert page.url.endswith("/c/1")
 
+        # make sure message composer has focus
+        assert page.get_by_placeholder("Message #general").evaluate("node => document.activeElement === node")
+
         page.wait_for_selector(".chat-message")
 
         assert page.locator(".chat-message").count() == settings.message_history_page_size
@@ -978,6 +978,11 @@ try:
         # switch to "random" channel
         page.get_by_test_id("nav-to-channel-2").click()
         page.wait_for_url("**/c/2")
+
+        # make sure message composer has focus
+        # wait a bit for thing to settle
+        page.wait_for_timeout(300)
+        assert page.get_by_placeholder("Message #random").evaluate("node => document.activeElement === node")
 
         # send a message
 

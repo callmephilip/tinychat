@@ -95,3 +95,6 @@ Thumbs.db
 
 # pytest
 .pytest_cache
+
+# fasthtml lucide
+icons.py
