@@ -659,34 +659,21 @@ try:
 
     def test_commands():
         cmd = Command.from_json("ping", '{"cid": 1}')
-        assert isinstance(cmd, PingCommand)
-        assert cmd.cid == 1
+        assert isinstance(cmd, PingCommand) and cmd.cid == 1
 
     def test_healthcheck(client):
         response = client.get('/healthcheck')
-        assert response.status_code == 200
-        assert response.json() == {"status": "ok"}
+        assert response.status_code == 200 and response.json() == {"status": "ok"}
 
     def test_auth(client):
-        assert len(users()) == 1
-        assert len(workspaces()) == 1
-        assert len(channels()) == 2
-        assert len(members()) == 1
-        assert len(channel_members()) == 2
+        assert len(users()) == 1 and len(workspaces()) == 1 and len(channels()) == 2 and len(members()) == 1 and len(channel_members()) == 2
 
         response: Response = client.get('/')
-
         assert response.status_code == 200
-        
-        response = client.get('/login')
-        response = client.post('/login', data={"name": "Philip" })
-        
-        assert len(users()) == 2
-        assert len(members()) == 2
-        assert len(channel_members()) == 4
 
-        assert response.status_code == 303
-        assert response.headers['location'] == '/c/1'
+        response = client.post('/login', data={"name": "Philip" })
+        assert response.status_code == 303 and response.headers['location'] == '/c/1'
+        assert len(users()) == 2 and len(members()) == 2 and len(channel_members()) == 4
 
     def test_message_seen(client):
         u1, u2, workspace = users.insert(User(name="Philip")), users.insert(User(name="John")), workspaces()[0]
@@ -703,8 +690,7 @@ try:
 
         c4m1, c4m2 = ChannelForMember.from_channel_member(cm1), ChannelForMember.from_channel_member(cm2)
 
-        assert c4m1.has_unread_messages is False
-        assert c4m2.has_unread_messages is True
+        assert c4m1.has_unread_messages is False and c4m2.has_unread_messages is True
 
         # sleep a bit (so timestamps work correctly)
         time.sleep(0.1)
@@ -714,8 +700,7 @@ try:
 
         c4m1, c4m2 = ChannelForMember.from_channel_member(cm1), ChannelForMember.from_channel_member(cm2)
 
-        assert c4m1.has_unread_messages is True
-        assert c4m2.has_unread_messages is False
+        assert c4m1.has_unread_messages is True and c4m2.has_unread_messages is False
 
         # can mark all as read
         c4m1 = c4m1.mark_all_as_read()
@@ -733,7 +718,6 @@ try:
         assert len(channels(where="is_direct=1")) == 1
 
         direct_channel = channels(where="is_direct=1")[0]
-
         dc_members = channel_members(where=f"channel={direct_channel.id}")
 
         # no unread messages at first
@@ -786,8 +770,7 @@ try:
         u1, workspace = users.insert(User(name="Philip")), workspaces()[0]
         m1 = members.insert(Member(user_id=u1.id, workspace_id=workspace.id))
 
-        assert len(channels()) == 2
-        assert len(channels(where="is_direct=1")) == 0
+        assert len(channels()) == 2 and len(channels(where="is_direct=1")) == 0
 
         # Bob registers (and logs in)
         client.post('/login', data={"name": "Bob"})
@@ -806,9 +789,7 @@ try:
 
         direct_channel_members = channel_members(where=f"channel={direct_channel.id}")
 
-        assert len(direct_channel_members) == 2
-        assert direct_channel_members[0].member == m1.id
-        assert direct_channel_members[1].member == m2.id
+        assert len(direct_channel_members) == 2 and direct_channel_members[0].member == m1.id and direct_channel_members[1].member == m2.id
 
         # make sure new channel is not recreated
         client.get(f'/direct/{m1.id}')
@@ -816,9 +797,7 @@ try:
         assert len(channels(where="is_direct=1")) == 1
 
     def test_list_of_channels_for_member(client):
-        assert len(users()) == 1
-        assert len(workspaces()) == 1
-        assert len(channels()) == 2
+        assert len(users()) == 1 and len(workspaces()) == 1 and len(channels()) == 2
 
         # philip signs up and logs in
         
@@ -829,10 +808,7 @@ try:
 
         c4m = ListOfChannelsForMember(member=m1, current_channel=channels()[0])
 
-        assert len(c4m.group_channels) == 2
-        assert len(c4m.direct_channels) == 0
-        assert len(c4m.direct_channel_placeholders) == 1
-        assert c4m.group_channels[0].channel_name == "general"
+        assert len(c4m.group_channels) == 2 and len(c4m.direct_channels) == 0 and len(c4m.direct_channel_placeholders) == 1 and c4m.group_channels[0].channel_name == "general"
         assert c4m.group_channels[1].channel_name == "random"
 
         # bob signs up and logs in
@@ -844,10 +820,7 @@ try:
 
         c4m = ListOfChannelsForMember(member=m2, current_channel=channels()[0])
 
-        assert len(c4m.group_channels) == 2
-        assert len(c4m.direct_channels) == 0
-        assert len(c4m.direct_channel_placeholders) == 2
-
+        assert len(c4m.group_channels) == 2 and len(c4m.direct_channels) == 0 and len(c4m.direct_channel_placeholders) == 2
         assert c4m.direct_channel_placeholders[0].member.name == "Phil"
 
         # bob wants to message philip
@@ -856,10 +829,7 @@ try:
 
         c4m = ListOfChannelsForMember(member=m2, current_channel=channels()[0])
 
-        assert len(c4m.group_channels) == 2
-        assert len(c4m.direct_channels) == 1
-        assert len(c4m.direct_channel_placeholders) == 1
-
+        assert len(c4m.group_channels) == 2 and len(c4m.direct_channels) == 1 and len(c4m.direct_channel_placeholders) == 1
         assert c4m.direct_channels[0].channel_name == "Philip"
 
         # steven signs up and logs in
@@ -871,9 +841,7 @@ try:
 
         c4m = ListOfChannelsForMember(member=m3, current_channel=channels()[0])
 
-        assert len(c4m.group_channels) == 2
-        assert len(c4m.direct_channels) == 0
-        assert len(c4m.direct_channel_placeholders) == 3
+        assert len(c4m.group_channels) == 2 and len(c4m.direct_channels) == 0 and len(c4m.direct_channel_placeholders) == 3
 
         assert c4m.direct_channel_placeholders[0].member.name == "Phil"
         assert c4m.direct_channel_placeholders[1].member.name == "Philip"
@@ -884,12 +852,8 @@ try:
 
         c4m = ListOfChannelsForMember(member=m3, current_channel=channels()[0])
 
-        assert len(c4m.group_channels) == 2
-        assert len(c4m.direct_channels) == 1
-        assert len(c4m.direct_channel_placeholders) == 2
-
-        assert c4m.direct_channels[0].channel_name == "Bob"
-        assert c4m.direct_channel_placeholders[0].member.name == "Phil"
+        assert len(c4m.group_channels) == 2 and len(c4m.direct_channels) == 1 and len(c4m.direct_channel_placeholders) == 2
+        assert c4m.direct_channels[0].channel_name == "Bob" and c4m.direct_channel_placeholders[0].member.name == "Phil"
 
     def test_channel_message_pagination():
         # mess with cursor encoding/decoding
@@ -918,32 +882,6 @@ try:
         assert msg_batch[0].message.startswith("1160")
         assert next_cursor is not None
         assert prev_cursor is not None
-
-        # # try going back using next_cursor
-
-        # msg_batch, prev_cursor, next_cursor = ChannelMessageWCtx.fetch(channel.id, next_cursor)
-        # assert msg_batch[-1].message == "hello 1000"
-        # assert msg_batch[0].message == "hello 961"
-        # assert next_cursor is not None
-        # assert prev_cursor is not None
-
-        # # try going further next into the void of nothingness
-
-        # msg_batch, prev_cursor, next_cursor = ChannelMessageWCtx.fetch(channel.id, next_cursor)
-        # assert len(msg_batch) == 0
-        # assert prev_cursor is None
-        # assert next_cursor is None
-
-        # # try powering all the way back
-        # c = None
-        # for _ in range(1000 // settings.message_history_page_size - 1):
-        #     msg_batch, prev_cursor, _ = ChannelMessageWCtx.fetch(channel.id, c)
-        #     c = prev_cursor
-        #     assert len(msg_batch) == settings.message_history_page_size
-        #     assert prev_cursor is not None
-        # msg_batch, _, _ = ChannelMessageWCtx.fetch(channel.id, c)
-        # assert len(msg_batch) == settings.message_history_page_size
-        # assert msg_batch[0].message == "hello 1"
 
     def test_happy_flow(page: Page):
         page.set_default_timeout(5000)
@@ -1150,6 +1088,4 @@ try:
         page.get_by_placeholder("Message #random").press("Enter")
 
         page.wait_for_selector(".chat-message")
-
-
 except: pass
