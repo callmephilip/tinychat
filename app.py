@@ -14,7 +14,6 @@ try:
 except ImportError: pass
 
 # TODO: fix tests
-# TODO: mobile tests
 # TODO: get server stats
 # TODO: figure out if there is a way to simplify some of the queries using triggers and views instead
 # TODO: figure out socket authentication
@@ -64,8 +63,7 @@ def check_auth(req, sess):
     # If the session key is not there, it redirects to the login page.
     if not mid or not wid: return login_redir
 
-    try:
-        req.scope['m'], req.scope['w'] = members[int(mid)], workspaces[int(wid)]
+    try: req.scope['m'], req.scope['w'] = members[int(mid)], workspaces[int(wid)]
     except NotFoundError: return login_redir
 
     # `xtra` is part of the MiniDataAPI spec. It adds a filter to queries and DDL statements,
@@ -104,7 +102,7 @@ connections: Dict[str, typing.Awaitable] = {}
 
 @dataclass
 class Settings:
-    workspace_name: str = "The Bakery"
+    workspace_name: str = "tinychat"
     host_url: str = "http://localhost:5001"
     default_channels: List[str] = dataclasses.field(default_factory=lambda: ["general", "random"])
     message_history_page_size = 40
@@ -517,10 +515,9 @@ async def dispatch_incoming_message(m: ChannelMessage):
             logger.debug(f"sending message to {c_s.sid} {connections[c_s.sid]}")
             await connections[c_s.sid](Div(id=f"channel-{m.channel}", hx_swap="scroll:bottom", hx_swap_oob="afterbegin")(m_with_ctx))
 
-@rt('/messages/send', methods=['POST'])
+@rt('/messages/send/{cid}', methods=['POST'])
 def send_msg(msg:str, cid:int, req: Request):
-    m = req.scope['m']
-    cm = channel_messages.insert(ChannelMessage(channel=cid, sender=m.id, message=msg))
+    cm = channel_messages.insert(ChannelMessage(channel=cid, sender=req.scope['m'].id, message=msg))
     new_message = ChannelMessage.with_ctx(cm)
     return new_message, BackgroundTask(dispatch_incoming_message, m=cm)
 
@@ -555,11 +552,10 @@ def channel(req: Request, cid: int):
         Div(cls='pb-6 px-4 flex-none', style="position: fixed; bottom: 0; width: 100%; background-color: white;" if is_mobile else "")(
             Div(cls='flex rounded-lg border-2 border-grey overflow-hidden')(
                 Span(cls='text-3xl text-grey border-r-2 border-grey p-2')(I_PLUS),
-                Form(id=frm_id, cls="w-full", hx_post="/messages/send", hx_target=f"#{msgs_id}", hx_swap="afterbegin",
+                Form(id=frm_id, cls="w-full", hx_post=f"/messages/send/{cid}", hx_target=f"#{msgs_id}", hx_swap="afterbegin",
                     **{ "hx-on::after-request": f"""document.querySelector("#{frm_id}").reset(); document.getElementById("{msgs_id}").scrollTop = document.getElementById("{msgs_id}").scrollHeight;""" }
                 )(
-                    Input(id='msg', autofocus="true", style="border:none; border-radius: 0;", placeholder=f"Message {channel_name}"),
-                    Input(name='cid', type="hidden", value=cid)
+                    Input(id='msg', autofocus="true", style="border:none; border-radius: 0;", placeholder=f"Message {channel_name}")
                 ),
             )
         )
