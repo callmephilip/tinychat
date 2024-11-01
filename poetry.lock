@@ -225,24 +225,6 @@ packaging = "*"
 dev = ["llms-txt", "matplotlib", "nbclassic", "nbdev (>=0.2.39)", "numpy", "pandas", "pillow", "pysymbol-llm", "torch"]
 
 [[package]]
-name = "fasthtml-tractor"
-version = "0.1.0a1"
-description = "sqlite3 db viewer for FastHTML projects"
-optional = false
-python-versions = "^3.10"
-files = []
-develop = false
-
-[package.dependencies]
-python-fasthtml = "~0.8.0"
-
-[package.source]
-type = "git"
-url = "https://github.com/callmephilip/fasthtml-tractor.git"
-reference = "HEAD"
-resolved_reference = "235d47f86412be19c2ea5ef4e1aea4fa9fe6f092"
-
-[[package]]
 name = "fastlite"
 version = "0.0.11"
 description = "A bit of extra usability for sqlite"
@@ -1400,4 +1382,4 @@ files = [
 [metadata]
 lock-version = "2.0"
 python-versions = "^3.10"
-content-hash = "0adeb7bddd8233ede8f34e811630e7abb48e097d771c5e18ce47c1508ef1f01b"
+content-hash = "2588301768b940079807cedef4e01fa8081d017c008fd9414de091da7a1368ed"

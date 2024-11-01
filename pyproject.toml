@@ -9,7 +9,6 @@ readme = "README.md"
 python = "^3.10"
 shad4fast = "^1.2.9"
 python-fasthtml = "^0.8.0"
-fasthtml-tractor = {git = "https://github.com/callmephilip/fasthtml-tractor.git"}
 lorem-text = "^2.1"
 pyyaml = "^6.0.2"
 ua-parser = "^0.18.0"

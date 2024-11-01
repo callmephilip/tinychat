@@ -1,4 +1,4 @@
-import logging, json, time, dataclasses, typing, hashlib, urllib, base64, random, threading, uvicorn, contextlib, user_agents
+import logging, json, time, dataclasses, typing, urllib, base64, random, threading, uvicorn, contextlib, user_agents
 import urllib.parse
 from lorem_text import lorem
 from fasthtml.common import *
@@ -6,15 +6,18 @@ from fasthtml.core import htmxsrc, fhjsscr, charset
 from fasthtml.svg import Svg
 from shad4fast import *
 from shad4fast.components.button import btn_variants, btn_base_cls, btn_sizes
-from lucide_fasthtml import Lucide
-from tractor import connect_tractor
+
+logging.basicConfig(format="%(asctime)s - %(message)s",datefmt="🧵 %d-%b-%y %H:%M:%S",level=logging.DEBUG,handlers=[logging.StreamHandler()])
+logger = logging.getLogger(__name__)
+
+# LIVE_RELOAD is handy for local development
+App = FastHTMLWithLiveReload if os.environ.get("LIVE_RELOAD", False) else FastHTML
 
 try:
     import pytest
     from playwright.sync_api import Page, Playwright, expect
 except ImportError: pass
 
-# TODO: fix tests
 # TODO: get server stats
 # TODO: figure out if there is a way to simplify some of the queries using triggers and views instead
 # TODO: figure out socket authentication
@@ -48,56 +51,62 @@ except ImportError: pass
 # | @Sarah                         |                               |
 # +-------------------------------+-------------------------------+
 
-def build_icon(content: str): return lambda cls: Svg(width="24", height="24", viewBox="0 0 24 24", fill="none", stroke="currentColor", stroke_width="2", stroke_linecap="round", stroke_linejoin="round", cls=cls)(NotStr(content))
-I_USER = build_icon("<path d=\"M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2\"></path><circle cx=\"12\" cy=\"7\" r=\"4\"></circle>") 
-I_USERS = build_icon("<path d=\"M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2\"></path><circle cx=\"9\" cy=\"7\" r=\"4\"></circle><path d=\"M22 21v-2a4 4 0 0 0-3-3.87\"></path><path d=\"M16 3.13a4 4 0 0 1 0 7.75\"></path>")
+
+# ================================================================================================================================================================================================================================
+# 👨‍🎨 Styling department
+# 
+# Credits: https://www.creative-tim.com/twcomponents/component/slack-clone-1 
+# ================================================================================================================================================================================================================================
+
+
+# svg icons - mostly Lucide (https://lucide.dev/)
+
+def bi(content: str): return lambda cls: Svg(width="24", height="24", viewBox="0 0 24 24", fill="none", stroke="currentColor", stroke_width="2", stroke_linecap="round", stroke_linejoin="round", cls=cls)(NotStr(content))
+
+I_USER = bi("<path d=\"M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2\"></path><circle cx=\"12\" cy=\"7\" r=\"4\"></circle>") 
+I_USERS = bi("<path d=\"M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2\"></path><circle cx=\"9\" cy=\"7\" r=\"4\"></circle><path d=\"M22 21v-2a4 4 0 0 0-3-3.87\"></path><path d=\"M16 3.13a4 4 0 0 1 0 7.75\"></path>")
 I_PLUS = NotStr("""<svg class="fill-current h-6 w-6 block" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20"><path d="M16 10c0 .553-.048 1-.601 1H11v4.399c0 .552-.447.601-1 .601-.553 0-1-.049-1-.601V11H4.601C4.049 11 4 10.553 4 10c0-.553.049-1 .601-1H9V4.601C9 4.048 9.447 4 10 4c.553 0 1 .048 1 .601V9h4.399c.553 0 .601.447.601 1z"></path></svg>""")
-I_ARROW_LEFT = build_icon("<path d=\"m12 19-7-7 7-7\"></path><path d=\"M19 12H5\"></path>")
-I_GH = build_icon("<path d=\"M15 22v-4a4.8 4.8 0 0 0-1-3.5c3 0 6-2 6-5.5.08-1.25-.27-2.48-1-3.5.28-1.15.28-2.35 0-3.5 0 0-1 0-3 1.5-2.64-.5-5.36-.5-8 0C6 2 5 2 5 2c-.3 1.15-.3 2.35 0 3.5A5.403 5.403 0 0 0 4 9c0 3.5 3 5.5 6 5.5-.39.49-.68 1.05-.85 1.65-.17.6-.22 1.23-.15 1.85v4\"></path><path d=\"M9 18c-4.51 2-5-2-7-2\"></path>")
-I_PLAY = build_icon("<polygon points=\"6 3 20 12 6 21 6 3\"></polygon>")
+I_ARROW_LEFT = bi("<path d=\"m12 19-7-7 7-7\"></path><path d=\"M19 12H5\"></path>")
+I_GH = bi("<path d=\"M15 22v-4a4.8 4.8 0 0 0-1-3.5c3 0 6-2 6-5.5.08-1.25-.27-2.48-1-3.5.28-1.15.28-2.35 0-3.5 0 0-1 0-3 1.5-2.64-.5-5.36-.5-8 0C6 2 5 2 5 2c-.3 1.15-.3 2.35 0 3.5A5.403 5.403 0 0 0 4 9c0 3.5 3 5.5 6 5.5-.39.49-.68 1.05-.85 1.65-.17.6-.22 1.23-.15 1.85v4\"></path><path d=\"M9 18c-4.51 2-5-2-7-2\"></path>")
+I_PLAY = bi("<polygon points=\"6 3 20 12 6 21 6 3\"></polygon>")
 
-# re https://www.creative-tim.com/twcomponents/component/slack-clone-1
-# re https://systemdesign.one/slack-architecture/
+# global style tweaks
 
-login_redir = RedirectResponse('/login', status_code=303)
-def check_auth(req, sess):
-    mid, wid = sess.get('mid', None), sess.get('wid', None)
-    # If the session key is not there, it redirects to the login page.
-    if not mid or not wid: return login_redir
+styles = """
+    .messages-loading.htmx-request {
+        padding: 10px;
+        background-image: url('https://htmx.org/img/bars.svg');
+        background-repeat: no-repeat;
+        background-position: center;
+    }
+"""
 
-    try: req.scope['m'], req.scope['w'] = members[int(mid)], workspaces[int(wid)]
-    except NotFoundError: return login_redir
 
-    # `xtra` is part of the MiniDataAPI spec. It adds a filter to queries and DDL statements,
-    # to ensure that the user can only see/edit their own todos.
-    # todos.xtra(name=auth)
+# ================================================================================================================================================================================================================================
+# Styling department [END]
+# ================================================================================================================================================================================================================================
+
+# ================================================================================================================================================================================================================================
+# 👷 Assorted helper functions
+# ================================================================================================================================================================================================================================
 
 def get_ts() -> int: return int(time.time() * 1000)
 def clsx(*args): return " ".join([arg for arg in args if arg])
-
-bware = Beforeware(check_auth, skip=[r'/favicon\.ico', r'/static/.*', r'.*\.css', '/', '/login', '/healthcheck'])
-
-App = FastHTMLWithLiveReload if os.environ.get("LIVE_RELOAD", False) else FastHTML
-app = App(debug=True, default_hdrs=False, hdrs=[
-    htmxsrc, fhjsscr, charset,
-    Meta(name="viewport", content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"),
-    ShadHead(tw_cdn=True),
-    Script(src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js", defer=True),
-    Style("""  
-        .messages-loading.htmx-request {
-          padding: 10px;
-          background-image: url('https://htmx.org/img/bars.svg');
-          background-repeat: no-repeat;
-          background-position: center;
-        }
-    """),
-], exts="ws", before=bware)
-rt = app.route
-
-logging.basicConfig(format="%(asctime)s - %(message)s",datefmt="🧵 %d-%b-%y %H:%M:%S",level=logging.DEBUG,handlers=[logging.StreamHandler()])
-logger = logging.getLogger(__name__)
-
+# thanks UI avatars https://ui-avatars.com/
 def get_image_url(name: str) -> str: return f"https://ui-avatars.com/api/?name={urllib.parse.quote(name)}&background=random&size=256"
+
+async def ws_send_to_member(member_id: int, data):
+    s = sockets(where=f"mid={member_id}")[0]
+    await connections[s.sid](data)
+
+# ================================================================================================================================================================================================================================
+# Assorted helper functions [END]
+# ================================================================================================================================================================================================================================
+
+
+# ================================================================================================================================================================================================================================
+# 🗄 Data
+# ================================================================================================================================================================================================================================
 
 # socket connections socket_id -> send
 connections: Dict[str, typing.Awaitable] = {}
@@ -105,11 +114,9 @@ connections: Dict[str, typing.Awaitable] = {}
 @dataclass
 class Settings:
     workspace_name: str = "tinychat"
-    host_url: str = "http://localhost:5001"
     default_channels: List[str] = dataclasses.field(default_factory=lambda: ["general", "random"])
     message_history_page_size = 40
     ping_interval_in_seconds: float = 5
-
 
 settings = Settings()
 
@@ -196,10 +203,7 @@ class ChannelMessage(TsRec):
     
     @staticmethod
     def with_ctx(m: 'ChannelMessage') -> 'ChannelMessageWCtx':
-        return ChannelMessageWCtx(*next(db.execute(f"""
-            SELECT id, created_at, message, u_name, u_image_url, c_id, c_name
-            FROM messages_w_ctx WHERE id={m.id}
-        """)))
+        return ChannelMessageWCtx(*next(db.execute(f"""SELECT id, created_at, message, u_name, u_image_url, c_id, c_name FROM messages_w_ctx WHERE id={m.id}""")))
 
 
 @dataclass
@@ -252,10 +256,7 @@ class ChannelMessageWCtx:
     
     @staticmethod
     def by_id(message_id: int) -> 'ChannelMessageWCtx':
-        return ChannelMessageWCtx(*next(db.execute(f"""
-            SELECT id, created_at, message, u_name, u_image_url, c_id, c_name
-            FROM messages_w_ctx WHERE id={message_id}
-        """)))
+        return ChannelMessageWCtx(*next(db.execute(f"""SELECT id, created_at, message, u_name, u_image_url, c_id, c_name FROM messages_w_ctx WHERE id={message_id}""")))
 
 @dataclass(kw_only=True)
 class Socket(TsRec): sid: str; mid: int
@@ -313,9 +314,12 @@ class ListOfChannelsForMember:
             ) and id != {self.member.id}
         """)))
 
+@dataclass
+class Login: name:str
+
 def setup_database(test=False):
-    global db
-    global users, workspaces, channels, members, channel_members, channel_messages, channel_message_seen_indicators, sockets
+    # Courageously setting a bunch of globals
+    global db, users, workspaces, channels, members, channel_members, channel_messages, channel_message_seen_indicators, sockets
 
     db = database('./data/data.db') if not test else database(':memory:')
 
@@ -358,25 +362,49 @@ def setup_database(test=False):
         ts, target_channel = get_ts(), channels()[0]
         for i in range(1200): channel_messages.insert(ChannelMessage(created_at=ts + i, channel=target_channel.id, sender=member.id, message=f"{i+1} {lorem.sentence()}"))
 
-    # if not test: connect_tractor(app, db.conn)
-    
+# ================================================================================================================================================================================================================================
+# Data [END]
+# ================================================================================================================================================================================================================================
 
+
+# ================================================================================================================================================================================================================================
+# 👉 Entry point
+# ================================================================================================================================================================================================================================
+
+login_redir = RedirectResponse('/login', status_code=303)
+no_auth = [r'/favicon\.ico', r'/static/.*', r'.*\.css', '/', '/login', '/healthcheck']
+
+def check_auth(req, sess):
+    mid, wid = sess.get('mid', None), sess.get('wid', None)
+    if not mid or not wid: return login_redir
+    try: req.scope['m'], req.scope['w'] = members[int(mid)], workspaces[int(wid)]
+    except NotFoundError: return login_redir
+
+hdrs = [
+    charset, Meta(name="viewport", content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"),
+    # 3rd party scripts: HTMX, alpinejs
+    htmxsrc, fhjsscr, Script(src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js", defer=True),
+    # shadcn/ui via sha4fast
+    ShadHead(tw_cdn=True),
+    # style tweaks
+    Style(styles),
+]
+app = App(debug=True, default_hdrs=False, hdrs=hdrs, exts="ws", before=Beforeware(check_auth, skip=no_auth))
+rt = app.route
+ 
 setup_database(os.environ.get("TEST_MODE", False))
+serve()
 
-async def ws_send_to_member(member_id: int, data):
-    s = sockets(where=f"mid={member_id}")[0]
-    logger.debug(f"sockets {s}")
-    # send message to each socket
-    logger.debug(f"sending message to {s.sid} {connections[s.sid]}")
-    await connections[s.sid](data)
+# ================================================================================================================================================================================================================================
+# Entry point [END]
+# ================================================================================================================================================================================================================================
 
-## UI
+# ================================================================================================================================================================================================================================
+# 👉 UI
+# ================================================================================================================================================================================================================================
 
 @patch
 def __ft__(self: Workspace): return H1(cls="text-l font-bold")(f'👨‍🏭 {self.name}')
-
-@patch
-def __ft__(self: User): return Div('👤', self.name)
 
 @patch
 def __ft__(self: ChannelForMember):
@@ -420,16 +448,12 @@ def __ft__(self: ListOfChannelsForMember):
         )
     )
 
-## end of UI
-
 def Sidebar(m: Member, w: Workspace, channel: Channel, is_mobile: bool):
     attrs = { "data-testid": "sidebar", "hx-on::after-request": "setTimeout(() => { document.querySelector('#mobile-menu').click(); }, 300)"} if is_mobile else {}
     return Div(cls="flex-none md:w-64 block overflow-hidden", **attrs)(
         Div(cls="space-y-4")(
-            # workspace info
             Div(cls="px-3 py-2 border-b")(w),
             ListOfChannelsForMember(member=m, current_channel=channel),
-            # profile info
             Sheet(
                 Div(cls="h-full")(
                     A(href=f"/logout", **{ "data-testid": "logout" }, cls=clsx(btn_sizes["sm"], btn_base_cls, btn_variants["default"]))("Logout")
@@ -479,6 +503,15 @@ def Layout(*content, m: Member, w: Workspace, channel: Channel, is_mobile: bool)
         """),
     )
 
+# ================================================================================================================================================================================================================================
+# UI [END]
+# ================================================================================================================================================================================================================================
+
+
+# ================================================================================================================================================================================================================================
+# 👉 Routing
+# ================================================================================================================================================================================================================================
+
 @rt("/")
 def landing():
     return LandingLayout(
@@ -492,9 +525,6 @@ def landing():
             A(href="https://github.com/callmephilip/tinychat", cls=clsx(btn_base_cls, btn_variants["outline"], btn_sizes["default"]))(I_GH(cls="mr-2 h-4 w-4"),"Github")
         )
     )
-
-@dataclass
-class Login: name:str
 
 @rt("/login")
 def get(): return LandingLayout(Form(action='/login', method='post')(Div(cls="flex")(Input(id='name', placeholder='Name'), Button(cls="ml-4")('Log in'))))
@@ -581,22 +611,19 @@ def channel(req: Request, cid: int):
 
 @rt('/direct/{to_m}')
 def direct(req: Request, to_m: int):
-    # /direct?to=member
     # m wants to message to_m
     m, to_m = req.scope['m'], members[to_m]
 
     # check if direct channel already exists
     direct_channel = channels(where=f"is_direct=1 and id in (select channel from channel_member where member={m.id}) and id in (select channel from channel_member where member={to_m.id})")
-    if len(direct_channel) != 0:
-        direct_channel = direct_channel[0]
+    if len(direct_channel) != 0: direct_channel = direct_channel[0]
     else:
         direct_channel = channels.insert(Channel(name=f"{m.name}-{to_m.name}", workspace_id=m.workspace_id, is_direct=True))
         channel_members.insert(ChannelMember(channel=direct_channel.id, member=m.id))
         channel_members.insert(ChannelMember(channel=direct_channel.id, member=to_m.id))
     return RedirectResponse(f'/c/{direct_channel.id}', status_code=303)
     
-
-def on_conn(ws, send):
+def ws_connect(ws, send):
     try:
         m, sid = members[int(ws.query_params.get("mid"))], str(id(ws))
         connections[sid] = send
@@ -604,10 +631,9 @@ def on_conn(ws, send):
         sockets.insert(Socket(sid=sid, mid=m.id))
     except NotFoundError: raise WebSocketException(400, "Missing member id")
     
-def on_disconn(ws):
+def ws_disconnect(ws):
     sid = str(id(ws))
-    try:
-        sockets.delete(sid)
+    try: sockets.delete(sid)
     except NotFoundError: pass
     connections.pop(sid, None)
 
@@ -615,20 +641,12 @@ async def process_ping(cmd: PingCommand, member: Member, current_channel: Channe
     ChannelForMember.from_channel_member(channel_members(where=f"channel={cmd.cid} and member={member.id}")[0]).mark_all_as_read()
     await ws_send_to_member(member.id, ListOfChannelsForMember(member=member, current_channel=current_channel))
 
-@app.ws('/ws', conn=on_conn, disconn=on_disconn)
+@app.ws('/ws', conn=ws_connect, disconn=ws_disconnect)
 async def ws(command:str, auth:dict, d: dict, ws, sess):
-    print(f""" 
-          Received socket message: {command}
-          Auth is: {auth}
-          Payload is: {d}
-          Headers: {ws.headers}
-          Session: {sess}""")
-
     mid, channel = int(auth['mid']), channels[int(d['cid'])]
     logger.debug(f"socket ID is {str(id(ws))}")
     
-    try:
-        socket = sockets[str(id(ws))]
+    try: socket = sockets[str(id(ws))]
     except NotFoundError:
         logger.debug(f"socket not found")
         return
@@ -639,20 +657,21 @@ async def ws(command:str, auth:dict, d: dict, ws, sess):
     cmd = Command.from_json(command, json.dumps(d))
     await { "ping": process_ping }[cmd.cmd](cmd, members[mid], channel)
 
-serve()
+# ================================================================================================================================================================================================================================
+# Routing [END]
+# ================================================================================================================================================================================================================================
 
-## ================================ Tests
+
+# ================================================================================================================================================================================================================================
+# 🤺 Tests
+# ================================================================================================================================================================================================================================
 
 try:
     @pytest.fixture(scope="function", autouse=True)
-    def create_test_database():
-        setup_database(test=True)
-        # yield
-        # db.conn.close()
+    def create_test_database(): setup_database(test=True)
 
     @pytest.fixture()
-    def client():
-        yield Client(app)
+    def client(): yield Client(app)
 
     @pytest.fixture(scope="function", autouse=True)
     def create_test_application_server():
@@ -1105,3 +1124,7 @@ try:
 
         page.wait_for_selector(".chat-message")
 except: pass
+
+# ================================================================================================================================================================================================================================
+# Tests [END]
+# ================================================================================================================================================================================================================================
