@@ -226,18 +226,18 @@ dev = ["llms-txt", "matplotlib", "nbclassic", "nbdev (>=0.2.39)", "numpy", "pand
 
 [[package]]
 name = "fastlite"
-version = "0.0.11"
+version = "0.0.13"
 description = "A bit of extra usability for sqlite"
 optional = false
 python-versions = ">=3.10"
 files = [
-    {file = "fastlite-0.0.11-py3-none-any.whl", hash = "sha256:66984ab849ae41d85d205fba3e057c24e967525184f9ecbd7536761f5551392d"},
-    {file = "fastlite-0.0.11.tar.gz", hash = "sha256:3ba61eeb510b14952c24ddc69947bff79324524d0e47dfb91ff1d8fe1492adfe"},
+    {file = "fastlite-0.0.13-py3-none-any.whl", hash = "sha256:8a8fac42ff71cdebd03272a8a2d8564c266dda1510b8d3e2dfaeae8a69c3e834"},
+    {file = "fastlite-0.0.13.tar.gz", hash = "sha256:e3039dd3ef144953691ea93ed902e46885a7d904feae92a11c835196693ad370"},
 ]
 
 [package.dependencies]
 fastcore = ">=1.7.1"
-sqlite-minutils = ">=3.37"
+sqlite-minutils = ">=3.37.0.post4"
 
 [[package]]
 name = "greenlet"
@@ -864,13 +864,13 @@ dev = ["ipython", "lxml", "pysymbol-llm"]
 
 [[package]]
 name = "python-multipart"
-version = "0.0.12"
+version = "0.0.17"
 description = "A streaming multipart parser for Python"
 optional = false
 python-versions = ">=3.8"
 files = [
-    {file = "python_multipart-0.0.12-py3-none-any.whl", hash = "sha256:43dcf96cf65888a9cd3423544dd0d75ac10f7aa0c3c28a175bbcd00c9ce1aebf"},
-    {file = "python_multipart-0.0.12.tar.gz", hash = "sha256:045e1f98d719c1ce085ed7f7e1ef9d8ccc8c02ba02b5566d5f7521410ced58cb"},
+    {file = "python_multipart-0.0.17-py3-none-any.whl", hash = "sha256:15dc4f487e0a9476cc1201261188ee0940165cffc94429b6fc565c4d3045cb5d"},
+    {file = "python_multipart-0.0.17.tar.gz", hash = "sha256:41330d831cae6e2f22902704ead2826ea038d0419530eadff3ea80175aec5538"},
 ]
 
 [[package]]
@@ -1023,13 +1023,13 @@ files = [
 
 [[package]]
 name = "sqlite-minutils"
-version = "3.37.0.post3"
+version = "4.0.0"
 description = "A fork of sqlite-utils with CLI etc removed"
 optional = false
 python-versions = ">=3.8"
 files = [
-    {file = "sqlite-minutils-3.37.0.post3.tar.gz", hash = "sha256:d7f8db1581ef4e8e6d507ad8998f3c0ad574c507e36715818017108c0814a1e6"},
-    {file = "sqlite_minutils-3.37.0.post3-py3-none-any.whl", hash = "sha256:1990e1d44263914abcb23d8c87163925739b43110923d2263e383cabbb271cc3"},
+    {file = "sqlite-minutils-4.0.0.tar.gz", hash = "sha256:d391c067b6c88f7a1917c8781fa3924eb2afbbadf06d7b548ac4a551b3e71e72"},
+    {file = "sqlite_minutils-4.0.0-py3-none-any.whl", hash = "sha256:6dac2854231e09606030a856b17de878b6228fe98117686384b03f081fc3afdd"},
 ]
 
 [package.dependencies]
@@ -1037,13 +1037,13 @@ fastcore = "*"
 
 [[package]]
 name = "starlette"
-version = "0.41.0"
+version = "0.41.2"
 description = "The little ASGI library that shines."
 optional = false
 python-versions = ">=3.8"
 files = [
-    {file = "starlette-0.41.0-py3-none-any.whl", hash = "sha256:a0193a3c413ebc9c78bff1c3546a45bb8c8bcb4a84cae8747d650a65bd37210a"},
-    {file = "starlette-0.41.0.tar.gz", hash = "sha256:39cbd8768b107d68bfe1ff1672b38a2c38b49777de46d2a592841d58e3bf7c2a"},
+    {file = "starlette-0.41.2-py3-none-any.whl", hash = "sha256:fbc189474b4731cf30fcef52f18a8d070e3f3b46c6a04c97579e85e6ffca942d"},
+    {file = "starlette-0.41.2.tar.gz", hash = "sha256:9834fd799d1a87fd346deb76158668cfa0b0d56f85caefe8268e2d97c3468b62"},
 ]
 
 [package.dependencies]
@@ -1397,4 +1397,4 @@ files = [
 [metadata]
 lock-version = "2.0"
 python-versions = "^3.10"
-content-hash = "6634c97343d409a8667de8324fda049d38cf62776f3261e6d6ac16f582f3d128"
+content-hash = "3d2f6d820159de8d9b39ef7bfd3f5bdbe77722568c2144aad4b78b71713b7313"

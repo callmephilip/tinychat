@@ -78,7 +78,9 @@ styles = """
         background-image: url('https://htmx.org/img/bars.svg');
         background-repeat: no-repeat;
         background-position: center;
-    }    
+    }
+    /* style links in messages */
+    .chat-message a {text-underline-offset: 4px; text-decoration-line: underline; font-weight: 500;}
 """
 
 
