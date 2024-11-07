@@ -1,4 +1,4 @@
-import logging, json, time, dataclasses, typing, urllib, base64, random, threading, uvicorn, contextlib, user_agents
+import logging, json, time, dataclasses, typing, urllib, base64, random, threading, uvicorn, contextlib, user_agents, markdown
 import urllib.parse
 from lorem_text import lorem
 from fasthtml.common import *
@@ -15,7 +15,7 @@ App = FastHTMLWithLiveReload if os.environ.get("LIVE_RELOAD", False) else FastHT
 
 try:
     import pytest
-    from playwright.sync_api import Page, Playwright, expect
+    from playwright.sync_api import Page, Playwright, expect, Locator
 except ImportError: pass
 
 # TODO: get server stats
@@ -65,7 +65,6 @@ def bi(content: str): return lambda cls: Svg(width="24", height="24", viewBox="0
 
 I_USER = bi("<path d=\"M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2\"></path><circle cx=\"12\" cy=\"7\" r=\"4\"></circle>") 
 I_USERS = bi("<path d=\"M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2\"></path><circle cx=\"9\" cy=\"7\" r=\"4\"></circle><path d=\"M22 21v-2a4 4 0 0 0-3-3.87\"></path><path d=\"M16 3.13a4 4 0 0 1 0 7.75\"></path>")
-I_PLUS = NotStr("""<svg class="fill-current h-6 w-6 block" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20"><path d="M16 10c0 .553-.048 1-.601 1H11v4.399c0 .552-.447.601-1 .601-.553 0-1-.049-1-.601V11H4.601C4.049 11 4 10.553 4 10c0-.553.049-1 .601-1H9V4.601C9 4.048 9.447 4 10 4c.553 0 1 .048 1 .601V9h4.399c.553 0 .601.447.601 1z"></path></svg>""")
 I_ARROW_LEFT = bi("<path d=\"m12 19-7-7 7-7\"></path><path d=\"M19 12H5\"></path>")
 I_GH = bi("<path d=\"M15 22v-4a4.8 4.8 0 0 0-1-3.5c3 0 6-2 6-5.5.08-1.25-.27-2.48-1-3.5.28-1.15.28-2.35 0-3.5 0 0-1 0-3 1.5-2.64-.5-5.36-.5-8 0C6 2 5 2 5 2c-.3 1.15-.3 2.35 0 3.5A5.403 5.403 0 0 0 4 9c0 3.5 3 5.5 6 5.5-.39.49-.68 1.05-.85 1.65-.17.6-.22 1.23-.15 1.85v4\"></path><path d=\"M9 18c-4.51 2-5-2-7-2\"></path>")
 I_PLAY = bi("<polygon points=\"6 3 20 12 6 21 6 3\"></polygon>")
@@ -73,18 +72,28 @@ I_PLAY = bi("<polygon points=\"6 3 20 12 6 21 6 3\"></polygon>")
 # global style tweaks
 
 styles = """
+    /* when loading messages, show a loading indicator */
     .messages-loading.htmx-request {
         padding: 10px;
         background-image: url('https://htmx.org/img/bars.svg');
         background-repeat: no-repeat;
         background-position: center;
-    }
+    }    
 """
 
 
 # ================================================================================================================================================================================================================================
 # Styling department [END]
 # ================================================================================================================================================================================================================================
+
+# ================================================================================================================================================================================================================================
+# Front-end department
+# ================================================================================================================================================================================================================================
+
+# ================================================================================================================================================================================================================================
+# Front-end department [END]
+# ================================================================================================================================================================================================================================
+
 
 # ================================================================================================================================================================================================================================
 # 👷 Assorted helper functions
@@ -209,6 +218,9 @@ class ChannelMessage(TsRec):
 @dataclass
 class ChannelMessageWCtx:
     id: int; created_at: int; message: str; u_name: str; u_image_url: str; c_id: int; c_name: str
+
+    @property
+    def formatted_message(self) -> str: return markdown.markdown(self.message)
 
     @staticmethod
     def encode_cursor(ts: int, direction: typing.Literal["prev", "next"]) -> str: return str(base64.b64encode(f"{ts}-{direction}".encode("ascii")), encoding="ascii") 
@@ -390,12 +402,21 @@ def check_auth(req, sess):
 
 hdrs = [
     charset, Meta(name="viewport", content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"),
+    Script(code="""{
+        "imports": { 
+           "ckeditor5": "https://cdn.ckeditor.com/ckeditor5/43.3.0/ckeditor5.js",
+           "ckeditor5/": "https://cdn.ckeditor.com/ckeditor5/43.3.0/",
+           "editor.js": "/static/editor.js"
+        }
+    }""", type="importmap"),
     # 3rd party scripts: HTMX, alpinejs
     htmxsrc, fhjsscr, Script(src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js", defer=True),
     # shadcn/ui via sha4fast
     ShadHead(tw_cdn=True),
+    # ckeditor5
+    Link(rel="stylesheet", href="https://cdn.ckeditor.com/ckeditor5/43.3.0/ckeditor5.css"),
     # style tweaks
-    Style(styles),
+    Style(styles)
 ]
 app = App(debug=True, default_hdrs=False, hdrs=hdrs, exts="ws", before=Beforeware(check_auth, skip=no_auth))
 rt = app.route
@@ -439,7 +460,7 @@ def __ft__(self: ChannelMessageWCtx):
                 Span(f"{self.u_name}", cls='font-bold'),
                 Span(cls='pl-2 text-grey text-xs', **{ "x-text": f"Intl.DateTimeFormat(navigator.language, {{ month: 'long', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false  }}).format(new Date({self.created_at}))" })
             ),
-            P(self.message, cls='text-black leading-normal')
+            P(NotStr(self.formatted_message), cls='text-black leading-normal')
         )
     )
 
@@ -508,7 +529,18 @@ def Layout(*content, m: Member, w: Workspace, channel: Channel, is_mobile: bool)
                const height = Math.max(event.detail.target.clientHeight, event.detail.target.scrollHeight, event.detail.target.offsetHeight);
                if (Math.abs(event.detail.target.scrollTop) / height < 0.2) { event.detail.target.scrollTop = event.detail.target.scrollHeight; }
             }
-        """),
+        """)
+    )
+
+def Editor(placeholder: str, frm_id: str) -> FT:
+    attrs = {
+        "x-data": f'{{ placeholder: "{placeholder}", formId: "{frm_id}" }}',
+        "x-init": "import('editor.js').then((editor) => editor.default($el, $data))"
+    } 
+    return Div(id='editor-container', cls='editor-container editor-container_classic-editor flex rounded-lg border-2 border-grey overflow-hidden')(
+        Div(cls='editor-container__editor w-full')(
+            Div(id='editor', **attrs)
+        )
     )
 
 # ================================================================================================================================================================================================================================
@@ -619,14 +651,12 @@ def channel(req: Request, cid: int):
             Div(hx_trigger="load", hx_get=f"/c/messages/{cid}", hx_swap="outerHTML"),
         ), 
         Div(cls='pb-6 px-4 flex-none', style="position: fixed; bottom: 0; width: 100%; background-color: white;" if is_mobile else "")(
-            Div(cls='flex rounded-lg border-2 border-grey overflow-hidden')(
-                Span(cls='text-3xl text-grey border-r-2 border-grey p-2')(I_PLUS),
-                Form(id=frm_id, cls="w-full", hx_post=f"/messages/send/{cid}", hx_target=f"#{msgs_id}", hx_swap="afterbegin",
-                    **{ "hx-on::after-request": f"""document.querySelector("#{frm_id}").reset(); document.getElementById("{msgs_id}").scrollTop = document.getElementById("{msgs_id}").scrollHeight;""" }
-                )(
-                    Input(id='msg', autofocus="true", style="border:none; border-radius: 0;", placeholder=f"Message {channel_name}")
-                ),
-            )
+            Form(id=frm_id, cls="w-full", hx_post=f"/messages/send/{cid}", hx_target=f"#{msgs_id}", hx_swap="afterbegin",
+                **{ "hx-on::after-request": f"""document.querySelector("#{frm_id}").reset(); document.getElementById("{msgs_id}").scrollTop = document.getElementById("{msgs_id}").scrollHeight;""" }
+            )(
+                Input(id='msg', type='hidden', autofocus="true"),
+                Editor(placeholder=f"Message {channel_name}", frm_id=frm_id)
+            ),
         )
     ]
 
@@ -719,6 +749,8 @@ try:
                     t.join()
 
         with TestServer(config=uvicorn.Config("app:app", host="0.0.0.0", port=5002, log_level="info")).run_in_thread(): yield
+
+    def locate_editor(page: Page, name: str) -> Locator: return page.locator(f"[data-placeholder='Message {name}']").locator("..")
 
     def test_commands():
         cmd = Cmd.from_json('{ "cmd": "ping", "d": {"cid": 1} }')
@@ -958,12 +990,12 @@ try:
         assert page.url.endswith("/c/1")
 
         # make sure message composer has focus
-        assert page.get_by_placeholder("Message #general").evaluate("node => document.activeElement === node")
+        assert locate_editor(page, "#general").evaluate("node => document.activeElement === node")
 
         page.wait_for_selector(".chat-message")
 
         assert page.locator(".chat-message").count() == settings.message_history_page_size
-        assert page.locator(".chat-message").locator("nth=-1").locator("p").inner_html().startswith("1161")
+        expect(page.locator(".chat-message").locator("nth=-1")).to_contain_text("1161")
 
         # scroll to the first message in the list
         page.locator(".chat-message").locator("nth=-1").scroll_into_view_if_needed()
@@ -971,7 +1003,7 @@ try:
         # expect more messages to load
         page.wait_for_selector(f".chat-message:nth-child({2 * settings.message_history_page_size})")
         assert page.locator(".chat-message").count() == 2 * settings.message_history_page_size
-        assert page.locator(".chat-message").locator(f"nth={2 * settings.message_history_page_size - 1}").locator("p").inner_html().startswith("1121")
+        expect(page.locator(".chat-message").locator(f"nth={2 * settings.message_history_page_size - 1}")).to_contain_text("1121")
 
         # switch to "random" channel
         page.get_by_test_id("nav-to-channel-2").click()
@@ -980,17 +1012,17 @@ try:
         # make sure message composer has focus
         # wait a bit for thing to settle
         page.wait_for_timeout(300)
-        assert page.get_by_placeholder("Message #random").evaluate("node => document.activeElement === node")
+        assert locate_editor(page, "#random").evaluate("node => document.activeElement === node")
 
         # send a message
 
-        page.get_by_placeholder("Message #random").fill("hello world")
-        page.get_by_placeholder("Message #random").press("Enter")
+        locate_editor(page, "#random").fill("hello world")
+        locate_editor(page, "#random").press("Enter")
 
         page.wait_for_selector(".chat-message")
         assert page.locator(".chat-message").count() == 1
 
-        page.locator(".chat-message").locator("p").inner_html().startswith("hello world")
+        expect(page.locator(".chat-message")).to_contain_text("hello world")
 
         # logout
         page.get_by_test_id("profile-menu").click()
@@ -1028,30 +1060,31 @@ try:
         steven_page.goto(f"{base_url}/c/2")
 
         # steven sends a message
-        steven_page.get_by_placeholder("Message #random").fill("hello world")
-        steven_page.get_by_placeholder("Message #random").press("Enter")
+
+        locate_editor(steven_page, "#random").fill("hello world")
+        locate_editor(steven_page, "#random").press("Enter")
         steven_page.wait_for_selector(".chat-message")
-        steven_page.locator(".chat-message").locator("p").inner_html().startswith("hello world")
+        expect(steven_page.locator(".chat-message")).to_contain_text("hello world")
 
         # bob should see the message
         bob_page.wait_for_selector(".chat-message")
 
         assert bob_page.locator(".chat-message").count() == 1
-        assert bob_page.locator(".chat-message").locator("p").inner_html() == "hello world"
+        expect(bob_page.locator(".chat-message")).to_contain_text("hello world")
 
         # bob responds
 
-        bob_page.get_by_placeholder("Message #random").fill("hey there")
-        bob_page.get_by_placeholder("Message #random").press("Enter")
+        locate_editor(bob_page, "#random").fill("hey there")
+        locate_editor(bob_page, "#random").press("Enter")
 
         bob_page.wait_for_selector(".chat-message:nth-child(1)")
         assert bob_page.locator(".chat-message").count() == 2
-        assert bob_page.locator(".chat-message:nth-child(1)").locator("p").inner_html() == "hey there"
+        expect(bob_page.locator(".chat-message:nth-child(1)")).to_contain_text("hey there")
 
         # steven should see the message
         steven_page.wait_for_selector(f".chat-message:nth-child(1)")
         assert steven_page.locator(".chat-message").count() == 2
-        assert steven_page.locator(".chat-message:nth-child(1)").locator("p").inner_html() == "hey there"
+        expect(steven_page.locator(".chat-message:nth-child(1)")).to_contain_text("hey there")
 
         # check on new message indicator
         # everything in random channel should be marked as "read"
@@ -1064,8 +1097,8 @@ try:
         steven_page.goto(f"{base_url}/c/1")
         steven_page.wait_for_url("**/c/1")
 
-        bob_page.get_by_placeholder("Message #random").fill("sending another message to random")
-        bob_page.get_by_placeholder("Message #random").press("Enter")
+        locate_editor(bob_page, "#random").fill("sending another message to random")
+        locate_editor(bob_page, "#random").press("Enter")
 
         # steven should see a new message notification for random channel
 
@@ -1084,12 +1117,12 @@ try:
         # bob is going to DM steven now
         bob_page.get_by_test_id("dm-3").click()
 
-        expect(bob_page.get_by_placeholder("Message Steven")).to_be_visible()
+        expect(locate_editor(bob_page, "Steven")).to_be_visible()
         expect(bob_page.get_by_test_id("dm-3")).to_have_count(0)
 
         # message steven
-        bob_page.get_by_placeholder("Message Steven").fill("hello steven")
-        bob_page.get_by_placeholder("Message Steven").press("Enter")
+        locate_editor(bob_page, "Steven").fill("hello steven")
+        locate_editor(bob_page, "Steven").press("Enter")
 
         # steven should see new message notification
 
@@ -1103,14 +1136,14 @@ try:
 
         steven_page.wait_for_selector(".chat-message")
         assert steven_page.locator(".chat-message").count() == 1
-        assert steven_page.locator(".chat-message").locator("p").inner_html() == "hello steven"
+        expect(steven_page.locator(".chat-message")).to_contain_text("hello steven")
 
         expect(steven_page.get_by_test_id("nav-to-channel-3")).not_to_have_class(re.compile("has-unread-messages"))
 
         # steven responds to bob
 
-        steven_page.get_by_placeholder("Message Bob").fill("hey bob")
-        steven_page.get_by_placeholder("Message Bob").press("Enter")
+        locate_editor(steven_page, "Bob").fill("hey bob")
+        locate_editor(steven_page, "Bob").press("Enter")
 
         # back to Bob now
 
@@ -1118,7 +1151,7 @@ try:
 
         bob_page.wait_for_selector(".chat-message:nth-child(1)")
         assert bob_page.locator(".chat-message").count() == 2
-        assert bob_page.locator(".chat-message:nth-child(1)").locator("p").inner_html() == "hey bob"
+        expect(bob_page.locator(".chat-message:nth-child(1)")).to_contain_text("hey bob")
 
     def test_mobile(playwright: Playwright):
         base_url = "http://localhost:5002"
@@ -1132,7 +1165,7 @@ try:
 
         page.wait_for_url("**/c/1")
 
-        assert page.get_by_placeholder("Message #general").evaluate("node => document.activeElement === node")
+        assert locate_editor(page, "#general").evaluate("node => document.activeElement === node")
 
         # confirm mobile sidebar toggler is visible
         expect(page.get_by_test_id("show-mobile-sidebar")).to_be_visible()
@@ -1145,13 +1178,15 @@ try:
         page.wait_for_url("**/c/2")
 
         page.wait_for_timeout(300)
-        assert page.get_by_placeholder("Message #random").evaluate("node => document.activeElement === node")
+        assert locate_editor(page, "#random").evaluate("node => document.activeElement === node")
 
         # message random
-        page.get_by_placeholder("Message #random").fill("hello world")
-        page.get_by_placeholder("Message #random").press("Enter")
+
+        locate_editor(page, "#random").fill("hello world")
+        locate_editor(page, "#random").press("Enter")
 
         page.wait_for_selector(".chat-message")
+
 except: pass
 
 # ================================================================================================================================================================================================================================
