@@ -960,13 +960,13 @@ use-chardet-on-py3 = ["chardet (>=3.0.2,<6)"]
 
 [[package]]
 name = "shad4fast"
-version = "1.2.9"
+version = "1.3.0"
 description = "Shadcn style components to be used with fasthtml"
 optional = false
 python-versions = ">=3.8"
 files = [
-    {file = "shad4fast-1.2.9-py3-none-any.whl", hash = "sha256:92ee58d7e69c38b820f2255395b433a15b67d668ed9e5f1d680471af63ecefc7"},
-    {file = "shad4fast-1.2.9.tar.gz", hash = "sha256:6dbe18c8439b469fbdd896fa8fbbf10063f8d491ceeb135c86bc1b7339d39d43"},
+    {file = "shad4fast-1.3.0-py3-none-any.whl", hash = "sha256:f201e51eb3907230d6c5740231e2792e2c85d702c4554b982d0cc0666369bbd4"},
+    {file = "shad4fast-1.3.0.tar.gz", hash = "sha256:aede9e0aa7a299adcf03cb81db8d6b15ba5ff9dd7252ad24ee84006e4db2ee44"},
 ]
 
 [package.dependencies]
@@ -1382,4 +1382,4 @@ files = [
 [metadata]
 lock-version = "2.0"
 python-versions = "^3.10"
-content-hash = "7b55b873bfc9e5b4d6c4b6604f6d53831dbe90440ef5d8f4603b3a54c4a62e93"
+content-hash = "13417bc1c7e1a71d91bf82cca0028cf79deed4757b4e969817e25c30e0a28cd8"
