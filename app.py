@@ -418,7 +418,8 @@ hdrs = [
     # ckeditor5
     Link(rel="stylesheet", href="https://cdn.ckeditor.com/ckeditor5/43.3.0/ckeditor5.css"),
     # style tweaks
-    Style(styles)
+    Style(styles),
+    Link(rel="modulepreload", href="https://cdn.ckeditor.com/ckeditor5/43.3.0/ckeditor5.js"),
 ]
 app = App(debug=True, default_hdrs=False, hdrs=hdrs, exts="ws", before=Beforeware(check_auth, skip=no_auth))
 rt = app.route
@@ -648,7 +649,7 @@ def channel(req: Request, cid: int):
                 H3(cls='text-grey-darkest font-extrabold')(channel_name)
             ),
         ),
-        Div(id=msgs_id, cls='scroller px-6 py-4 flex-1 flex flex-col-reverse overflow-y-scroll', style="padding-top: 60px; padding-bottom: 68px;" if is_mobile else "")(
+        Div(id=msgs_id, cls='scroller px-6 py-4 flex-1 flex flex-col-reverse overflow-y-scroll', style="padding-top: 60px; padding-bottom: 130px;" if is_mobile else "")(
             # lazy load first batch of messages
             Div(hx_trigger="load", hx_get=f"/c/messages/{cid}", hx_swap="outerHTML"),
         ), 
@@ -749,7 +750,6 @@ try:
                 finally:
                     self.should_exit = True
                     t.join()
-
         with TestServer(config=uvicorn.Config("app:app", host="0.0.0.0", port=5002, log_level="info")).run_in_thread(): yield
 
     def locate_editor(page: Page, name: str) -> Locator: return page.locator(f"[data-placeholder='Message {name}']").locator("..")
