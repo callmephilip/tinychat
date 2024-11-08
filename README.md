@@ -36,3 +36,4 @@ TEST_MODE=yes PWDEBUG=1 poetry run pytest app.py -s
 # Deploy
 
 Check [deploy](https://github.com/callmephilip/tinychat/tree/deploy) branch for an example deployment approach.
+
