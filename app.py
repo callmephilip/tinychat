@@ -740,6 +740,7 @@ def direct(req: Request, to_m: int):
 
 async def handle_file_upload(file: UploadFile, f: FileUpload, member: Member):
     file_extension = os.path.splitext(file.filename)[1]
+    if not os.path.exists(settings.file_upload_path): os.makedirs(settings.file_upload_path)
     with open(f"{settings.file_upload_path}/{f.id}{file_extension}", "wb") as upload: upload.write(await file.read())
     f = f.mark_as_uploaded()
     await ws_send_to_member(member.id, Div(id="attachments", hx_swap_oob="true")(f))
