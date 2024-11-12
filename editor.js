@@ -22,8 +22,14 @@ export default function ($el, { placeholder, formId }) {
       }
       data.preventDefault();
       evt.stop();
-      document.querySelector(`#${formId} > input[name=msg]`).value =
-        editor.getData();
+
+      const content = editor.getData();
+
+      if (!content.trim()) {
+        return;
+      }
+
+      document.querySelector(`#${formId} > input[name=msg]`).value = content;
       htmx.trigger(`#${formId}`, "submit");
       editor.setData("");
       document.querySelector(`#${formId} > input[name=msg]`).value = null;

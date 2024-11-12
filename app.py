@@ -6,6 +6,10 @@ from fasthtml.core import htmxsrc, fhjsscr, charset
 from fasthtml.svg import Svg
 from shad4fast import *
 from shad4fast.components.button import btn_variants, btn_base_cls, btn_sizes
+from lucide_fasthtml import Lucide
+
+Lucide("download")
+
 
 logging.basicConfig(format="%(asctime)s - %(message)s",datefmt="🧵 %d-%b-%y %H:%M:%S",level=logging.DEBUG,handlers=[logging.StreamHandler()])
 logger = logging.getLogger(__name__)
@@ -83,6 +87,10 @@ I_USERS = bi("<path d=\"M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2\"></path><circ
 I_ARROW_LEFT = bi("<path d=\"m12 19-7-7 7-7\"></path><path d=\"M19 12H5\"></path>")
 I_GH = bi("<path d=\"M15 22v-4a4.8 4.8 0 0 0-1-3.5c3 0 6-2 6-5.5.08-1.25-.27-2.48-1-3.5.28-1.15.28-2.35 0-3.5 0 0-1 0-3 1.5-2.64-.5-5.36-.5-8 0C6 2 5 2 5 2c-.3 1.15-.3 2.35 0 3.5A5.403 5.403 0 0 0 4 9c0 3.5 3 5.5 6 5.5-.39.49-.68 1.05-.85 1.65-.17.6-.22 1.23-.15 1.85v4\"></path><path d=\"M9 18c-4.51 2-5-2-7-2\"></path>")
 I_PLAY = bi("<polygon points=\"6 3 20 12 6 21 6 3\"></polygon>")
+I_ATTACHMENT = bi("<path d=\"m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48\"></path>")
+I_IMAGE = bi("<rect height=\"18\" rx=\"2\" ry=\"2\" width=\"18\" x=\"3\" y=\"3\"></rect><circle cx=\"9\" cy=\"9\" r=\"2\"></circle><path d=\"m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21\"></path>")
+I_FILE = bi("<path d=\"M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z\"></path><path d=\"M14 2v4a2 2 0 0 0 2 2h4\"></path><path d=\"M10 9H8\"></path><path d=\"M16 13H8\"></path><path d=\"M16 17H8\"></path>")
+I_DOWNLOAD = bi("<path d=\"M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4\"></path><polyline points=\"7 10 12 15 17 10\"></polyline><line x1=\"12\" x2=\"12\" y1=\"15\" y2=\"3\"></line>")
 
 # global style tweaks
 
@@ -96,6 +104,12 @@ styles = """
     }
     /* style links in messages */
     .chat-message a {text-underline-offset: 4px; text-decoration-line: underline; font-weight: 500;}
+
+    /* CKEditor */
+    .ck-powered-by { display: none; }
+    .ck-editor__editable { border: none !important; box-shadow: none !important; }
+    .ck-toolbar { border: none !important; }
+    .ck-sticky-panel__content { border: none !important; }
 """
 
 
@@ -507,14 +521,25 @@ def __ft__(self: ChannelMessageWCtx):
                 Span(f"{self.u_name}", cls='font-bold'),
                 Span(cls='pl-2 text-grey text-xs', **{ "x-text": f"Intl.DateTimeFormat(navigator.language, {{ month: 'long', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false  }}).format(new Date({self.created_at}))" })
             ),
-            P(NotStr(self.formatted_message), cls='text-black leading-normal')
-        ),
-        Div(cls="attachments")(*attachments) if len(attachments) != 0 else None
+            P(NotStr(self.formatted_message), cls='text-black leading-normal'),
+            Div(cls="attachments mt-4")(*attachments) if len(attachments) != 0 else None
+        )
     )
 
 @patch 
 def __ft__(self: FileUpload):
-    return Strong(cls=f"attachment {self.status}")(f"{self.id} {self.original_name} {self.file_type} {self.status}")
+    spinner = NotStr("""<svg class="animate-spin -ml-1 mr-2 h-4 w-4 text-gray" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+    </svg>""")
+    file_type = I_IMAGE(cls="h-4 w-4 mr-2") if self.file_type.startswith("image") else I_FILE(cls="h-4 w-4 mr-2")
+    cls = cls=f'attachment {self.status} group inline-flex items-center rounded-md border px-2.5 py-0.5 text-xs font-semibold transition-colors focus:outline-none text-foreground'
+
+    return A(href=f"/download/{self.id}", cls=cls, style="text-decoration-line: none !important;")(
+        file_type,
+        self.original_name,
+        I_DOWNLOAD(cls="ml-2 h-4 w-4 hidden group-hover:inline") if self.status == "uploaded" else None,
+    ) if self.status == "uploaded" else Div(cls=cls)(spinner, self.original_name)
 
 
 @patch
@@ -585,17 +610,18 @@ def Layout(*content, m: Member, w: Workspace, channel: Channel, is_mobile: bool)
         """)
     )
 
-def Editor(placeholder: str, frm_id: str) -> FT:
+def Editor(placeholder: str, frm_id: str):
     attrs = {
         "x-data": f'{{ placeholder: "{placeholder}", formId: "{frm_id}" }}',
         "x-init": "import('editor.js').then((editor) => editor.default($el, $data))"
     } 
-    return Div(id='editor-container', cls='editor-container editor-container_classic-editor flex rounded-lg border-2 border-grey overflow-hidden')(
-        Div(cls='editor-container__editor w-full')(
-            Div(id='editor', **attrs)
-        )
+    return Div(id='editor-container', cls='editor-container editor-container_classic-editor flex flex-col rounded-lg border-2 border-grey overflow-hidden')(
+        Div(cls='editor-container__editor w-full')(Div(id='editor', **attrs)),
+        Div(cls="pl-2")(Div(id="attachments")),
+        Div(Button(id=f"{frm_id}_upload_pick", variant="ghost", size="sm")(I_ATTACHMENT(cls='h-4 w-4')))
     )
-
+    
+    
 # ================================================================================================================================================================================================================================
 # UI [END]
 # ================================================================================================================================================================================================================================
@@ -716,10 +742,8 @@ def channel(req: Request, cid: int):
             ),
             Form(id=f"{frm_id}_upload", hx_post="/upload", hx_target=f"#{frm_id}", hx_swap="beforeend")(
                 Input(id=f"file", type="file", style="display: none;")
-            )
+            ),
         ),
-        Div(id="attachments"),
-        Button(id=f"{frm_id}_upload_pick")("Add file"),
     ]
 
     return convo if req.headers.get('Hx-Request') else Layout(*convo, m=m, w=w, channel=channel, is_mobile=is_mobile)
@@ -751,6 +775,11 @@ async def post(req, file:UploadFile):
     f = file_uploads.insert(FileUpload(original_name=file.filename, file_type=file.content_type))
     await ws_send_to_member(m.id, Div(id="attachments", hx_swap_oob="true")(f))
     return f.to_form_element(), BackgroundTask(handle_file_upload, file=file, f=f, member=m)
+
+@rt('/download/{fid}')
+def download(fid: str):
+    f = file_uploads[fid]
+    return FileResponse(f"{settings.file_upload_path}/{f.id}{os.path.splitext(f.original_name)[1]}", filename=f.original_name)
 
 def ws_connect(ws, send):
     if not ws.session: raise WebSocketException(400, "Missing session")
@@ -1262,6 +1291,22 @@ try:
 
         page.wait_for_selector(".chat-message")
 
+    def test_message_composer(page: Page):
+        page.goto("/login")
+
+        page.get_by_placeholder("Name").fill(f"{random.randint(0, 1000000)}")
+        page.get_by_role("button", name="Log in").click()
+
+        # make sure we end up on the main channel page
+        assert page.url.endswith("/c/1")
+
+        page.goto("/c/2")
+
+        # try sending an empty message
+        locate_editor(page, "#random").press("Enter")
+        page.wait_for_timeout(500)
+        expect(page.locator(".chat-message")).not_to_be_visible()
+
     @flaky(max_runs=3)
     def test_uploads(page: Page):
         page.set_default_timeout(5000)
@@ -1295,8 +1340,8 @@ try:
 
         # chat message should include attachments
 
-        expect(page.locator(".chat-message > .attachments")).to_be_visible()
-        expect(page.locator(".chat-message > .attachments > .attachment")).to_have_count(1)
+        expect(page.locator(".chat-message .attachments")).to_be_visible()
+        expect(page.locator(".chat-message .attachments > .attachment")).to_have_count(1)
 
         # editor upload area should be cleared
 
@@ -1314,7 +1359,7 @@ try:
         locate_editor(page, "#random").press("Enter")
 
         expect(page.locator(".chat-message")).to_have_count(2)
-        expect(page.locator(".chat-message").first.locator(".attachments > .attachment")).to_have_count(1)
+        expect(page.locator(".chat-message").first.locator(".attachments .attachment")).to_have_count(1)
 
 except: pass
 
