@@ -1,4 +1,4 @@
-import logging, json, time, dataclasses, typing, urllib, base64, random, threading, uvicorn, contextlib, user_agents, markdown
+import logging, json, time, dataclasses, typing, urllib, base64, random, threading, uvicorn, contextlib, user_agents, markdown, uuid
 import urllib.parse
 from lorem_text import lorem
 from fasthtml.common import *
@@ -16,8 +16,23 @@ App = FastHTMLWithLiveReload if os.environ.get("LIVE_RELOAD", False) else FastHT
 try:
     import pytest
     from playwright.sync_api import Page, Playwright, expect, Locator
+    from flaky import flaky
 except ImportError: pass
 
+# =============== Uploads todos
+# TODO: rich text editor currently uses "hidden" field selector to set text editor content which will most certainly break
+# TODO: clear file picker after upload
+# TODO: clear upload fields after sending message
+# TODO: disable sending while uploading
+# TODO: check drag and drop
+# TODO: set file size caps
+# TODO: implement nice UI for attachments
+# TODO: implement download of attachments
+# TODO: image resize pipeline?  like vercel does?
+
+# TODO: messed up markup - try sending multiple messages
+# TODO: do not allow sending empty messages
+# TODO: htmx integration: use defer + pin versions
 # TODO: get server stats
 # TODO: figure out if there is a way to simplify some of the queries using triggers and views instead
 # TODO: support markdown in messages?
@@ -101,6 +116,7 @@ styles = """
 # 👷 Assorted helper functions
 # ================================================================================================================================================================================================================================
 
+def quote(s: str) -> str: return f'"{s}"'
 def get_ts() -> int: return int(time.time() * 1000)
 def clsx(*args): return " ".join([arg for arg in args if arg])
 # thanks UI avatars https://ui-avatars.com/
@@ -128,6 +144,7 @@ class Settings:
     default_channels: List[str] = dataclasses.field(default_factory=lambda: ["general", "random"])
     message_history_page_size = 40
     ping_interval_in_seconds: float = 5
+    file_upload_path: str = "./data/uploads"
 
 settings = Settings()
 
@@ -135,10 +152,26 @@ settings = Settings()
 class TsRec: created_at: int = dataclasses.field(default_factory=get_ts)
 
 @dataclass(kw_only=True)
+class FileUpload(TsRec):
+    id: str = dataclasses.field(default_factory=lambda: str(uuid.uuid4())); original_name: str; file_type: str; status: str = "uploading"
+
+    def to_form_element(self): return Hidden(value=self.id, name=f"upload_{self.id}")
+
+    @staticmethod
+    def from_form_data(form_data: FormData) -> List['FileUpload']:
+        uploads = [u.replace("upload_", "") for u in filter(lambda k: k.startswith("upload_"), form_data.keys())]
+        return file_uploads(where=f"id in ({','.join(map(lambda id: quote( id), uploads))})")
+    
+    def mark_as_uploaded(self) -> 'FileUpload':
+        self.status = "uploaded"
+        return file_uploads.update(self)
+
+@dataclass(kw_only=True)
 class User(TsRec): id: int; name: str; image_url: str; is_account_enabled: bool = True
 
 @dataclass(kw_only=True)
 class Workspace(TsRec): id: int; name: str
+
 @dataclass(kw_only=True)
 class Channel(TsRec):
     id: int; name: str; workspace_id: int; is_direct: bool = False; is_private: bool = False
@@ -216,6 +249,9 @@ class ChannelMessage(TsRec):
     def with_ctx(m: 'ChannelMessage') -> 'ChannelMessageWCtx':
         return ChannelMessageWCtx(*next(db.execute(f"""SELECT id, created_at, message, u_name, u_image_url, c_id, c_name FROM messages_w_ctx WHERE id={m.id}""")))
 
+@dataclass(kw_only=True)
+class ChannelMessageAttachment(TsRec):
+    id: int; channel_message: int; file_upload: str
 
 @dataclass
 class ChannelMessageWCtx:
@@ -223,6 +259,11 @@ class ChannelMessageWCtx:
 
     @property
     def formatted_message(self) -> str: return markdown.markdown(self.message)
+
+    @property
+    def attachments(self) -> List[FileUpload]:
+        attachments = message_attachments(where=f"channel_message={self.id}")
+        return file_uploads(where=f"id in ({','.join(map(lambda a: quote(a.file_upload), attachments))})")
 
     @staticmethod
     def encode_cursor(ts: int, direction: typing.Literal["prev", "next"]) -> str: return str(base64.b64encode(f"{ts}-{direction}".encode("ascii")), encoding="ascii") 
@@ -341,7 +382,7 @@ class Login: name:str
 
 def setup_database(test=False):
     # Courageously setting a bunch of globals
-    global db, users, workspaces, channels, members, channel_members, channel_messages, channel_message_seen_indicators, sockets
+    global db, users, workspaces, channels, members, channel_members, channel_messages, channel_message_seen_indicators, sockets, file_uploads, message_attachments
 
     db = database('./data/data.db') if not test else database(':memory:')
 
@@ -355,6 +396,8 @@ def setup_database(test=False):
     channel_messages = db.create(ChannelMessage, pk="id", foreign_keys=[("channel", "channel", "id"), ("sender", "user", "id")])
     channel_message_seen_indicators = db.create(ChannelMessageSeenIndicator, pk=("channel_id", "member_id"), foreign_keys=[("channel_id", "channel", "id"), ("member_id", "member", "id")])
     sockets =  db.create(Socket, pk="sid", foreign_keys=[("mid", "member", "id")])
+    file_uploads = db.create(FileUpload, pk="id")
+    message_attachments = db.create(ChannelMessageAttachment, pk="id", foreign_keys=[("channel_message", "channel_message", "id"), ("file_upload", "file_upload", "id")])
 
     if not db["messages_w_ctx"].exists():
         db.create_view("messages_w_ctx", """
@@ -425,7 +468,7 @@ app = App(debug=True, default_hdrs=False, hdrs=hdrs, exts="ws", before=Beforewar
 rt = app.route
  
 setup_database(os.environ.get("TEST_MODE", False))
-serve()
+if not os.environ.get("TEST_MODE", False): serve()
 
 # ================================================================================================================================================================================================================================
 # Entry point [END]
@@ -456,6 +499,7 @@ def __ft__(self: ChannelPlaceholder):
 
 @patch
 def __ft__(self: ChannelMessageWCtx):
+    attachments = self.attachments
     return Div(id=f"chat-message-{self.id}", cls='chat-message flex items-start mb-4 text-sm')(
         Img(src=self.u_image_url, cls='w-10 h-10 rounded mr-3'),
         Div(cls='flex-1 overflow-hidden')(
@@ -464,8 +508,14 @@ def __ft__(self: ChannelMessageWCtx):
                 Span(cls='pl-2 text-grey text-xs', **{ "x-text": f"Intl.DateTimeFormat(navigator.language, {{ month: 'long', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false  }}).format(new Date({self.created_at}))" })
             ),
             P(NotStr(self.formatted_message), cls='text-black leading-normal')
-        )
+        ),
+        Div(cls="attachments")(*attachments) if len(attachments) != 0 else None
     )
+
+@patch 
+def __ft__(self: FileUpload):
+    return Strong(cls=f"attachment {self.status}")(f"{self.id} {self.original_name} {self.file_type} {self.status}")
+
 
 @patch
 def __ft__(self: ListOfChannelsForMember):
@@ -621,8 +671,12 @@ async def dispatch_incoming_message(m: ChannelMessage):
             await connections[c_s.sid](Div(id=f"channel-{m.channel}", hx_swap="scroll:bottom", hx_swap_oob="afterbegin")(m_with_ctx))
 
 @rt('/messages/send/{cid}', methods=['POST'])
-def send_msg(msg:str, cid:int, req: Request):
+async def send_msg(msg:str, cid:int, req: Request):
+    form_data = await req.form()
+    uploads = FileUpload.from_form_data(form_data)
+    print(f"uploads are: {uploads}")
     cm = channel_messages.insert(ChannelMessage(channel=cid, sender=req.scope['m'].id, message=msg))
+    for upload in uploads: message_attachments.insert(ChannelMessageAttachment(channel_message=cm.id, file_upload=upload.id))
     new_message = ChannelMessage.with_ctx(cm)
     return new_message, BackgroundTask(dispatch_incoming_message, m=cm)
 
@@ -658,9 +712,14 @@ def channel(req: Request, cid: int):
                 **{ "hx-on::after-request": f"""document.querySelector("#{frm_id}").reset(); document.getElementById("{msgs_id}").scrollTop = document.getElementById("{msgs_id}").scrollHeight;""" }
             )(
                 Input(id='msg', type='hidden', autofocus="true"),
-                Editor(placeholder=f"Message {channel_name}", frm_id=frm_id)
+                Editor(placeholder=f"Message {channel_name}", frm_id=frm_id),
             ),
-        )
+            Form(id=f"{frm_id}_upload", hx_post="/upload", hx_target=f"#{frm_id}", hx_swap="beforeend")(
+                Input(id=f"file", type="file", style="display: none;")
+            )
+        ),
+        Div(id="attachments"),
+        Button(id=f"{frm_id}_upload_pick")("Add file"),
     ]
 
     return convo if req.headers.get('Hx-Request') else Layout(*convo, m=m, w=w, channel=channel, is_mobile=is_mobile)
@@ -678,7 +737,20 @@ def direct(req: Request, to_m: int):
         channel_members.insert(ChannelMember(channel=direct_channel.id, member=m.id))
         channel_members.insert(ChannelMember(channel=direct_channel.id, member=to_m.id))
     return RedirectResponse(f'/c/{direct_channel.id}', status_code=303)
-    
+
+async def handle_file_upload(file: UploadFile, f: FileUpload, member: Member):
+    file_extension = os.path.splitext(file.filename)[1]
+    with open(f"{settings.file_upload_path}/{f.id}{file_extension}", "wb") as upload: upload.write(await file.read())
+    f = f.mark_as_uploaded()
+    await ws_send_to_member(member.id, Div(id="attachments", hx_swap_oob="true")(f))
+
+@rt("/upload")
+async def post(req, file:UploadFile):
+    m: Member = req.scope['m']
+    f = file_uploads.insert(FileUpload(original_name=file.filename, file_type=file.content_type))
+    await ws_send_to_member(m.id, Div(id="attachments", hx_swap_oob="true")(f))
+    return f.to_form_element(), BackgroundTask(handle_file_upload, file=file, f=f, member=m)
+
 def ws_connect(ws, send):
     if not ws.session: raise WebSocketException(400, "Missing session")
     try:
@@ -750,7 +822,7 @@ try:
                 finally:
                     self.should_exit = True
                     t.join()
-        with TestServer(config=uvicorn.Config("app:app", host="0.0.0.0", port=5002, log_level="info")).run_in_thread(): yield
+        with TestServer(config=uvicorn.Config("app:app", host="0.0.0.0", port=5002, log_level="debug")).run_in_thread(): yield
 
     def locate_editor(page: Page, name: str) -> Locator: return page.locator(f"[data-placeholder='Message {name}']").locator("..")
 
@@ -1188,6 +1260,60 @@ try:
         locate_editor(page, "#random").press("Enter")
 
         page.wait_for_selector(".chat-message")
+
+    @flaky(max_runs=3)
+    def test_uploads(page: Page):
+        page.set_default_timeout(5000)
+        page.goto("/login")
+
+        page.get_by_placeholder("Name").fill(f"{random.randint(0, 1000000)}")
+        page.get_by_role("button", name="Log in").click()
+
+        # make sure we end up on the main channel page
+        assert page.url.endswith("/c/1")
+
+        page.goto("/c/2")
+
+        # trigger upload
+        page.set_input_files('#file', os.path.join(os.getcwd(), "./test-data/image.jpeg"))
+
+        # wait for upload to complete
+        expect(page.locator("#attachments > .attachment.uploaded")).to_be_visible() 
+        expect(page.locator("#attachments > .attachment.uploaded")).to_have_count(1)
+
+        page.wait_for_timeout(300)
+
+        # make sure file picker is cleared
+        assert page.locator("#file").evaluate("node => node.files.length === 0")
+
+        # compose a message and send it over
+        locate_editor(page, "#random").fill("hello world")
+        locate_editor(page, "#random").press("Enter")
+
+        expect(page.locator(".chat-message")).to_be_visible() 
+
+        # chat message should include attachments
+
+        expect(page.locator(".chat-message > .attachments")).to_be_visible()
+        expect(page.locator(".chat-message > .attachments > .attachment")).to_have_count(1)
+
+        # editor upload area should be cleared
+
+        expect(page.locator("#attachments > .attachment.uploaded")).to_have_count(0)
+
+        # upload another file
+        page.set_input_files('#file', os.path.join(os.getcwd(), "./test-data/doc.pdf"))
+
+        expect(page.locator("#attachments > .attachment.uploaded")).to_be_visible() 
+        expect(page.locator("#attachments > .attachment.uploaded")).to_have_count(1)
+
+        page.wait_for_timeout(300)
+
+        locate_editor(page, "#random").fill("sending a document")
+        locate_editor(page, "#random").press("Enter")
+
+        expect(page.locator(".chat-message")).to_have_count(2)
+        expect(page.locator(".chat-message").first.locator(".attachments > .attachment")).to_have_count(1)
 
 except: pass
 

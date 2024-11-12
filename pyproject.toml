@@ -18,6 +18,7 @@ markdown = "^3.7"
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.3.3"
 pytest-playwright = "^0.5.2"
+flaky = "^3.8.1"
 
 [build-system]
 requires = ["poetry-core"]

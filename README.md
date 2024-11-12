@@ -30,7 +30,7 @@ TEST_MODE=yes poetry run pytest app.py --base-url http://localhost:5002
 Run tests with debugger
 
 ```
-TEST_MODE=yes PWDEBUG=1 poetry run pytest app.py -s
+TEST_MODE=yes PWDEBUG=1 poetry run pytest app.py --base-url http://localhost:5002 -s
 ```
 
 # Deploy
