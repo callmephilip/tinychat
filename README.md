@@ -35,5 +35,4 @@ TEST_MODE=yes PWDEBUG=1 poetry run pytest app.py --base-url http://localhost:500
 
 # Deploy
 
-Check [deploy](https://github.com/callmephilip/tinychat/tree/deploy) branch for an example deployment approach.
-
+Check [deploy](https://github.com/callmephilip/tinychat/tree/deploy) branch for an example deployment approach. Additional deps:

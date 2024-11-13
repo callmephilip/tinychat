@@ -24,18 +24,7 @@ try:
 except ImportError: pass
 
 # =============== Uploads todos
-# TODO: rich text editor currently uses "hidden" field selector to set text editor content which will most certainly break
-# TODO: clear file picker after upload
-# TODO: clear upload fields after sending message
-# TODO: disable sending while uploading
-# TODO: check drag and drop
-# TODO: set file size caps
-# TODO: implement nice UI for attachments
-# TODO: implement download of attachments
 # TODO: image resize pipeline?  like vercel does?
-
-# TODO: messed up markup - try sending multiple messages
-# TODO: do not allow sending empty messages
 # TODO: htmx integration: use defer + pin versions
 # TODO: get server stats
 # TODO: figure out if there is a way to simplify some of the queries using triggers and views instead
@@ -159,6 +148,8 @@ class Settings:
     message_history_page_size = 40
     ping_interval_in_seconds: float = 5
     file_upload_path: str = "./data/uploads"
+    file_uploads_allowed_types: str = "image/*,.pdf,audio/*"
+    file_uploads_max_size_in_bytes: int = 1024 * 1024 * 10 # 10MB
 
 settings = Settings()
 
@@ -612,7 +603,7 @@ def Layout(*content, m: Member, w: Workspace, channel: Channel, is_mobile: bool)
 
 def Editor(placeholder: str, frm_id: str):
     attrs = {
-        "x-data": f'{{ placeholder: "{placeholder}", formId: "{frm_id}" }}',
+        "x-data": f'{{ placeholder: "{placeholder}", formId: "{frm_id}", maxUploadSizeInBytes: {settings.file_uploads_max_size_in_bytes} }}',
         "x-init": "import('editor.js').then((editor) => editor.default($el, $data))"
     } 
     return Div(id='editor-container', cls='editor-container editor-container_classic-editor flex flex-col rounded-lg border-2 border-grey overflow-hidden')(
@@ -741,7 +732,7 @@ def channel(req: Request, cid: int):
                 Editor(placeholder=f"Message {channel_name}", frm_id=frm_id),
             ),
             Form(id=f"{frm_id}_upload", hx_post="/upload", hx_target=f"#{frm_id}", hx_swap="beforeend")(
-                Input(id=f"file", type="file", style="display: none;")
+                Input(id=f"file", type="file", style="display: none", accept=settings.file_uploads_allowed_types)
             ),
         ),
     ]
@@ -771,7 +762,12 @@ async def handle_file_upload(file: UploadFile, f: FileUpload, member: Member):
 
 @rt("/upload")
 async def post(req, file:UploadFile):
+    # TODO: check file types using https://github.com/ahupp/python-magic
     m: Member = req.scope['m']
+
+    content_length = req.headers.get('content-length', settings.file_uploads_max_size_in_bytes + 1)
+    if int(content_length) > settings.file_uploads_max_size_in_bytes: return JSONResponse({ "error": "File is too big" }, status_code=400)
+
     f = file_uploads.insert(FileUpload(original_name=file.filename, file_type=file.content_type))
     await ws_send_to_member(m.id, Div(id="attachments", hx_swap_oob="true")(f))
     return f.to_form_element(), BackgroundTask(handle_file_upload, file=file, f=f, member=m)

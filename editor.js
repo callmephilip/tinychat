@@ -12,7 +12,7 @@ import {
   SelectAll,
 } from "ckeditor5";
 
-export default function ($el, { placeholder, formId }) {
+export default function ($el, { placeholder, formId, maxUploadSizeInBytes }) {
   const filePicker = document.getElementById("file");
 
   function SubmitOnEnter(editor) {
@@ -71,13 +71,21 @@ export default function ($el, { placeholder, formId }) {
     },
     placeholder,
   }).then((editor) => {
-    filePicker.addEventListener("change", () =>
-      htmx.trigger(`#${formId}_upload`, "submit")
-    );
+    filePicker.addEventListener("change", (e) => {
+      if (e.target.files[0].size > maxUploadSizeInBytes) {
+        alert("This file is too large.");
+        filePicker.value = null;
+        return;
+      }
+
+      htmx.trigger(`#${formId}_upload`, "submit");
+    });
 
     document
       .getElementById(`${formId}_upload_pick`)
-      .addEventListener("click", () => {
+      .addEventListener("click", (e) => {
+        e.stopPropagation();
+        e.preventDefault();
         filePicker.click();
       });
 
