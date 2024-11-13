@@ -1,4 +1,4 @@
-import logging, json, time, dataclasses, typing, urllib, base64, random, threading, uvicorn, contextlib, user_agents, markdown, uuid
+import logging, json, time, dataclasses, typing, urllib, base64, random, threading, uvicorn, contextlib, user_agents, markdown, uuid, hashlib
 import urllib.parse
 from lorem_text import lorem
 from fasthtml.common import *
@@ -6,9 +6,6 @@ from fasthtml.core import htmxsrc, fhjsscr, charset
 from fasthtml.svg import Svg
 from shad4fast import *
 from shad4fast.components.button import btn_variants, btn_base_cls, btn_sizes
-from lucide_fasthtml import Lucide
-
-Lucide("download")
 
 
 logging.basicConfig(format="%(asctime)s - %(message)s",datefmt="🧵 %d-%b-%y %H:%M:%S",level=logging.DEBUG,handlers=[logging.StreamHandler()])
@@ -124,6 +121,11 @@ def get_ts() -> int: return int(time.time() * 1000)
 def clsx(*args): return " ".join([arg for arg in args if arg])
 # thanks UI avatars https://ui-avatars.com/
 def get_image_url(name: str) -> str: return f"https://ui-avatars.com/api/?name={urllib.parse.quote(name)}&background=random&size=256"
+
+def hash_for_file(file_path: str) -> str:
+    with open(file_path, "rb") as f: file_hash = hashlib.sha256(f.read()).hexdigest()
+    return file_hash
+
 
 async def ws_send_to_member(member_id: int, data):
     s = sockets(where=f"mid={member_id}")[0]
@@ -452,13 +454,15 @@ def check_auth(req, sess):
 
 hdrs = [
     charset, Meta(name="viewport", content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"),
-    Script(code="""{
-        "imports": { 
+    # compute file hash for editor.js
+
+    Script(code=f"""{{
+        "imports": {{ 
            "ckeditor5": "https://cdn.ckeditor.com/ckeditor5/43.3.0/ckeditor5.js",
            "ckeditor5/": "https://cdn.ckeditor.com/ckeditor5/43.3.0/",
-           "editor.js": "/static/editor.js"
-        }
-    }""", type="importmap"),
+           "editor.js": "/static/editor.js?{hash_for_file('editor.js')}"
+        }}
+    }}""", type="importmap"),
     # 3rd party scripts: HTMX, alpinejs
     htmxsrc, fhjsscr, Script(src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js", defer=True),
     # shadcn/ui via sha4fast
