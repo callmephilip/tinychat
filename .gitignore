@@ -98,3 +98,5 @@ Thumbs.db
 
 # fasthtml lucide
 icons.py
+
+data/uploads/*
