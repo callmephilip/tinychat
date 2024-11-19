@@ -20,7 +20,7 @@ try:
     from flaky import flaky
 except ImportError: pass
 
-# =============== Uploads todos
+# TODO: does not show multiple uploads in the composer
 # TODO: image resize pipeline?  like vercel does?
 # TODO: htmx integration: use defer + pin versions
 # TODO: get server stats
