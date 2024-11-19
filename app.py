@@ -20,7 +20,6 @@ try:
     from flaky import flaky
 except ImportError: pass
 
-# =============== Uploads todos
 # TODO: image resize pipeline?  like vercel does?
 # TODO: htmx integration: use defer + pin versions
 # TODO: get server stats
@@ -529,12 +528,13 @@ def __ft__(self: FileUpload):
     </svg>""")
     file_type = I_IMAGE(cls="h-4 w-4 mr-2") if self.file_type.startswith("image") else I_FILE(cls="h-4 w-4 mr-2")
     cls = cls=f'attachment {self.status} group inline-flex items-center rounded-md border px-2.5 py-0.5 text-xs font-semibold transition-colors focus:outline-none text-foreground'
+    id = f"file-upload-{self.id}"
 
-    return A(href=f"/download/{self.id}", cls=cls, style="text-decoration-line: none !important;")(
+    return A(href=f"/download/{self.id}", cls=cls, id=id, style="text-decoration-line: none !important;")(
         file_type,
         self.original_name,
         I_DOWNLOAD(cls="ml-2 h-4 w-4 hidden group-hover:inline") if self.status == "uploaded" else None,
-    ) if self.status == "uploaded" else Div(cls=cls)(spinner, self.original_name)
+    ) if self.status == "uploaded" else Div(cls=cls, id=id)(spinner, self.original_name)
 
 
 @patch
@@ -762,7 +762,7 @@ async def handle_file_upload(file: UploadFile, f: FileUpload, member: Member):
     if not os.path.exists(settings.file_upload_path): os.makedirs(settings.file_upload_path)
     with open(f"{settings.file_upload_path}/{f.id}{file_extension}", "wb") as upload: upload.write(await file.read())
     f = f.mark_as_uploaded()
-    await ws_send_to_member(member.id, Div(id="attachments", hx_swap_oob="true")(f))
+    await ws_send_to_member(member.id, f)
 
 @rt("/upload")
 async def post(req, file:UploadFile):
@@ -773,7 +773,7 @@ async def post(req, file:UploadFile):
     if int(content_length) > settings.file_uploads_max_size_in_bytes: return JSONResponse({ "error": "File is too big" }, status_code=400)
 
     f = file_uploads.insert(FileUpload(original_name=file.filename, file_type=file.content_type))
-    await ws_send_to_member(m.id, Div(id="attachments", hx_swap_oob="true")(f))
+    await ws_send_to_member(m.id, Div(id="attachments", hx_swap_oob="beforeend")(f))
     return f.to_form_element(), BackgroundTask(handle_file_upload, file=file, f=f, member=m)
 
 @rt('/download/{fid}')
