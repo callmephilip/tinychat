@@ -380,11 +380,18 @@ class ListOfChannelsForMember:
                         select channel from channel_member where member={self.member.id}
                     )
                 )
-            ) and id != {self.member.id}
+            ) and id != {self.member.id} LIMIT 10
         """)))
 
 @dataclass
 class Login: name:str
+
+@dataclass
+class ServerStats:
+    connections: int; users: int; messages: int
+
+    @staticmethod
+    def get() -> 'ServerStats': return ServerStats(connections=len(connections), users=members.count, messages=channel_messages.count)
 
 def setup_database(test=False):
     # Courageously setting a bunch of globals
@@ -550,12 +557,20 @@ def __ft__(self: ListOfChannelsForMember):
         )
     )
 
+@patch
+def __ft__(self: ServerStats):
+    return Div(cls="flex items-center space-x-2")(
+        Span(cls='w-3.5 h-3.5 bg-green-400 border-2 border-white dark:border-gray-800 rounded-full'),
+        Div(f"{self.connections} connections, {self.users} users, {self.messages} messages", cls="text-xs text-muted-foreground")
+    )
+
 def Sidebar(m: Member, w: Workspace, channel: Channel, is_mobile: bool):
     attrs = { "data-testid": "sidebar", "hx-on::after-request": "setTimeout(() => { document.querySelector('#mobile-menu').click(); }, 300)"} if is_mobile else {}
     return Div(cls="flex-none md:w-64 block overflow-hidden", **attrs)(
         Div(cls="space-y-4")(
             Div(cls="px-3 py-2 border-b")(w),
             ListOfChannelsForMember(member=m, current_channel=channel),
+            Div(hx_get="/stats", hx_trigger="every 2s", cls="px-3 py-2 border-t"),
             Sheet(
                 Div(cls="h-full")(
                     A(href=f"/logout", **{ "data-testid": "logout" }, cls=clsx(btn_sizes["sm"], btn_base_cls, btn_variants["default"]))("Logout")
@@ -581,7 +596,7 @@ def LandingLayout(*content) -> FT:
     )
 
 def Layout(*content, m: Member, w: Workspace, channel: Channel, is_mobile: bool) -> FT:
-    return Title("tinychat"), Body(cls="font-sans antialiased h-dvh flex bg-background overflow-hidden", hx_ext='ws', ws_connect=f'/ws?mid={m.id}')(
+    return Title("tinychat"), Body(cls="font-sans antialiased h-dvh flex bg-background overflow-hidden", hx_ext='ws', ws_connect='/ws')(
         # sidebar
         Sidebar(m, w, channel, is_mobile) if not is_mobile else None,
         # main content
@@ -680,6 +695,9 @@ def logout(sess):
 @rt("/healthcheck")
 def get(): return JSONResponse({"status": "ok"})
 
+@rt("/stats")
+def get(): return ServerStats.get()
+
 async def dispatch_incoming_message(m: ChannelMessage):
     members_to_notify = list(filter(lambda cm: cm.member != m.sender, channel_members(where=f"channel={m.channel}")))
     m_with_ctx = ChannelMessage.with_ctx(m)
@@ -695,7 +713,6 @@ async def dispatch_incoming_message(m: ChannelMessage):
 async def send_msg(msg:str, cid:int, req: Request):
     form_data = await req.form()
     uploads = FileUpload.from_form_data(form_data)
-    print(f"uploads are: {uploads}")
     cm = channel_messages.insert(ChannelMessage(channel=cid, sender=req.scope['m'].id, message=msg))
     for upload in uploads: message_attachments.insert(ChannelMessageAttachment(channel_message=cm.id, file_upload=upload.id))
     new_message = ChannelMessage.with_ctx(cm)
@@ -781,10 +798,10 @@ def download(fid: str):
     f = file_uploads[fid]
     return FileResponse(f"{settings.file_upload_path}/{f.id}{os.path.splitext(f.original_name)[1]}", filename=f.original_name)
 
-def ws_connect(ws, send):
-    if not ws.session: raise WebSocketException(400, "Missing session")
+def ws_connect(ws, session, send):
+    if not session: raise WebSocketException(400, "Missing session")
     try:
-        m, sid = members[int(ws.query_params.get("mid"))], str(id(ws))
+        m, sid = members[int(session.get("mid"))], str(id(ws))
         connections[sid] = send
         for s in sockets(where=f"mid={m.id}"): sockets.delete(s.sid)
         sockets.insert(Socket(sid=sid, mid=m.id))
