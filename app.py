@@ -706,8 +706,12 @@ async def dispatch_incoming_message(m: ChannelMessage):
         logger.debug(f"sockets {s}")
         # send message to each socket
         for c_s in s:
-            logger.debug(f"sending message to {c_s.sid} {connections[c_s.sid]}")
-            await connections[c_s.sid](Div(id=f"channel-{m.channel}", hx_swap="scroll:bottom", hx_swap_oob="afterbegin")(m_with_ctx))
+            conn = connections.get(c_s.sid)
+            if not conn: continue
+            logger.debug(f"sending message to {c_s.sid}")
+            try:
+                await conn(Div(id=f"channel-{m.channel}", hx_swap="scroll:bottom", hx_swap_oob="afterbegin")(m_with_ctx))
+            except: logger.error(f"Error sending message to {c_s.sid}")
 
 @rt('/messages/send/{cid}', methods=['POST'])
 async def send_msg(msg:str, cid:int, req: Request):
