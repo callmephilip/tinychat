@@ -380,7 +380,7 @@ class ListOfChannelsForMember:
                         select channel from channel_member where member={self.member.id}
                     )
                 )
-            ) and id != {self.member.id}
+            ) and id != {self.member.id} LIMIT 10
         """)))
 
 @dataclass
@@ -581,7 +581,7 @@ def LandingLayout(*content) -> FT:
     )
 
 def Layout(*content, m: Member, w: Workspace, channel: Channel, is_mobile: bool) -> FT:
-    return Title("tinychat"), Body(cls="font-sans antialiased h-dvh flex bg-background overflow-hidden", hx_ext='ws', ws_connect=f'/ws?mid={m.id}')(
+    return Title("tinychat"), Body(cls="font-sans antialiased h-dvh flex bg-background overflow-hidden", hx_ext='ws', ws_connect='/ws')(
         # sidebar
         Sidebar(m, w, channel, is_mobile) if not is_mobile else None,
         # main content
@@ -781,10 +781,10 @@ def download(fid: str):
     f = file_uploads[fid]
     return FileResponse(f"{settings.file_upload_path}/{f.id}{os.path.splitext(f.original_name)[1]}", filename=f.original_name)
 
-def ws_connect(ws, send):
-    if not ws.session: raise WebSocketException(400, "Missing session")
+def ws_connect(ws, session, send):
+    if not session: raise WebSocketException(400, "Missing session")
     try:
-        m, sid = members[int(ws.query_params.get("mid"))], str(id(ws))
+        m, sid = members[int(session.get("mid"))], str(id(ws))
         connections[sid] = send
         for s in sockets(where=f"mid={m.id}"): sockets.delete(s.sid)
         sockets.insert(Socket(sid=sid, mid=m.id))
