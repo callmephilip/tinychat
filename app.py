@@ -522,7 +522,7 @@ def __ft__(self: ChannelMessageWCtx):
                 Span(f"{self.u_name}", cls='font-bold'),
                 Span(cls='pl-2 text-grey text-xs', **{ "x-text": f"Intl.DateTimeFormat(navigator.language, {{ month: 'long', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false  }}).format(new Date({self.created_at}))" })
             ),
-            P(NotStr(self.formatted_message), cls='text-black leading-normal'),
+            Div(cls="leading-relaxed")(NotStr(self.formatted_message)),
             Div(cls="attachments mt-4")(*attachments) if len(attachments) != 0 else None
         )
     )
