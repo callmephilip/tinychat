@@ -470,7 +470,10 @@ hdrs = [
         }}
     }}""", type="importmap"),
     # 3rd party scripts: HTMX, alpinejs
-    htmxsrc, fhjsscr, Script(src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js", defer=True),
+    Script(src="https://cdnjs.cloudflare.com/ajax/libs/htmx/2.0.3/htmx.min.js"), # htmxsrc,
+    ScriptX(fname="htmx-ext-ws.js"),
+    fhjsscr,
+    Script(src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js", defer=True),
     # shadcn/ui via sha4fast
     ShadHead(tw_cdn=True),
     # ckeditor5
@@ -479,7 +482,8 @@ hdrs = [
     Style(styles),
     Link(rel="modulepreload", href="https://cdn.ckeditor.com/ckeditor5/43.3.0/ckeditor5.js"),
 ]
-app = App(debug=True, default_hdrs=False, hdrs=hdrs, exts="ws", before=Beforeware(check_auth, skip=no_auth))
+# XX: exts="ws" manually setup via ScripX above
+app = App(debug=True, default_hdrs=False, hdrs=hdrs, before=Beforeware(check_auth, skip=no_auth))
 rt = app.route
  
 setup_database(os.environ.get("TEST_MODE", False))
