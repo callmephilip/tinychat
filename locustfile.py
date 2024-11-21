@@ -1,4 +1,5 @@
 from locust import HttpUser, task, between
+from urllib.parse import urlparse
 from typing import Optional
 import gevent, json, re, random
 from websockets.sync.client import connect
@@ -29,18 +30,19 @@ class TinychatUser(HttpUser):
     wait_time = between(1, 5)
     # The default host of the target client. This can be changed
     # at any time
-    host = 'http://localhost:5001/'
+    host = 'https://tinychat.chat'
 
     def on_start(self):
-        self.client.post('login', dict(name=get_random_user()))
+        self.client.post('/login', dict(name=get_random_user()))
         self.ws_connect()
     
     def on_stop(self):
         pass
 
-    def ws_connect(self):
+    def ws_connect(self):    
+        h = urlparse(self.host)
         session_cookie = self.client.cookies.get_dict().get('session_')
-        self.ws = connect("ws://localhost:5001/ws?mid=3", additional_headers={"Cookie": f"session_={session_cookie}"})
+        self.ws = connect(f"{'ws' if h.scheme == 'http' else 'wss'}://{h.netloc}/ws", additional_headers={"Cookie": f"session_={session_cookie}"})
         self.ws_greenlet = gevent.spawn(self.ws_receive_loop)
         self.ping_greenlet = gevent.spawn(self.ping_loop)
         
@@ -60,12 +62,12 @@ class TinychatUser(HttpUser):
         if random.choice([0, 1, 2, 3]) == 3: upload = self.upload_file()
         payload = dict(msg=get_random_message())
         if upload: payload[f'upload_{upload}'] = upload
-        self.client.post('messages/send/1', payload)
-        if upload: self.client.get(f"download/{upload}")
+        self.client.post('/messages/send/1', payload)
+        if upload: self.client.get(f"/download/{upload}")
 
     def upload_file(self) -> Optional[str]:
         file = ('image.jpeg', open('test-data/image.jpeg', 'rb'), 'image/jpeg')
-        r = self.client.post("upload", files={'file': file}, headers={"Hx-Request": "true"})
+        r = self.client.post("/upload", files={'file': file}, headers={"Hx-Request": "true"})
         # what we get back looks like:
         # <input type="hidden" value="4b3f303a-d166-4f97-b2d5-bb5e11800d8d" name="upload_4b3f303a-d166-4f97-b2d5-bb5e11800d8d">
         # extract value and name
