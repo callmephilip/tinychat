@@ -1,4 +1,5 @@
 from locust import HttpUser, task, between
+from typing import Optional
 import gevent, json, re, random
 from websockets.sync.client import connect
 
@@ -31,7 +32,7 @@ class TinychatUser(HttpUser):
     host = 'http://localhost:5001/'
 
     def on_start(self):
-        self.client.post('/login', dict(name=get_random_user()))
+        self.client.post('login', dict(name=get_random_user()))
         self.ws_connect()
     
     def on_stop(self):
@@ -54,9 +55,23 @@ class TinychatUser(HttpUser):
             gevent.sleep(5)
 
     @task
-    def chat(self):
-        self.client.post('messages/send/1', dict(msg=get_random_message()))
-        assert self.client.get('/c/1').status_code == 200
+    def send_message(self):
+        upload = None
+        if random.choice([0, 1, 2, 3]) == 3: upload = self.upload_file()
+        payload = dict(msg=get_random_message())
+        if upload: payload[f'upload_{upload}'] = upload
+        self.client.post('messages/send/1', payload)
+        if upload: self.client.get(f"download/{upload}")
+
+    def upload_file(self) -> Optional[str]:
+        file = ('image.jpeg', open('test-data/image.jpeg', 'rb'), 'image/jpeg')
+        r = self.client.post("upload", files={'file': file}, headers={"Hx-Request": "true"})
+        # what we get back looks like:
+        # <input type="hidden" value="4b3f303a-d166-4f97-b2d5-bb5e11800d8d" name="upload_4b3f303a-d166-4f97-b2d5-bb5e11800d8d">
+        # extract value and name
+        m = re.search(r'value="[\w-]+"', r.text)
+        if not m: return None
+        return m.group().split('"')[1]
 
     @task
     def browse_chat_history(self):
