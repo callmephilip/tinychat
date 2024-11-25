@@ -20,6 +20,7 @@ try:
     from flaky import flaky
 except ImportError: pass
 
+# TODO: consider storing uploads in sqlite
 # TODO: image resize pipeline?  like vercel does?
 # TODO: htmx integration: use defer + pin versions
 # TODO: get server stats
