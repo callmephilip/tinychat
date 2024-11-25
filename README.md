@@ -50,4 +50,4 @@ Check [deploy](https://github.com/callmephilip/tinychat/tree/deploy) branch for 
 # Build and run docker locally
 
 docker build -t tinychat .
-docker run -d  --name  tinychat -p 5001:5001 -v $PWD/data:/code/data tinychat
+docker run --cpus=1 -m 412m -d --name tinychat -p 5001:5001 -v $PWD/data:/code/data tinychat
