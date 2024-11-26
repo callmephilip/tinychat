@@ -17,7 +17,7 @@ markdown = "^3.7"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.3.3"
-pytest-playwright = "^0.5.2"
+pytest-playwright = "^0.6.1"
 flaky = "^3.8.1"
 locust = "^2.32.3"
 websockets = "^14.1"
