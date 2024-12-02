@@ -16,7 +16,7 @@ user-agents = "^2.2.0"
 markdown = "^3.7"
 
 [tool.poetry.group.dev.dependencies]
-pytest = "^8.3.3"
+pytest = "^8.3.4"
 pytest-playwright = "^0.5.2"
 flaky = "^3.8.1"
 locust = "^2.32.3"
